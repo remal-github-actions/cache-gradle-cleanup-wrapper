@@ -1,2 +1,1 @@
-# template-typescript
-Template repository for GitHub typescript actions
+# cache-gradle-cleanup-wrapper
