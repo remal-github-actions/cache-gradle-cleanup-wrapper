@@ -39,9 +39,7 @@ async function run() {
         const globber = await glob.create(gradleUserHome + '/wrapper/dists/*/*/*.zip');
         for await (const file of globber.globGenerator()) {
             core.info(`Removing ${file}`);
-            rimraf.sync(file, {
-                disableGlob: true
-            });
+            rimraf.sync(file);
         }
     }
     catch (error) {
