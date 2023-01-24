@@ -5466,26 +5466,22 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.rimraf = exports.sync = exports.rimrafSync = exports.moveRemove = exports.moveRemoveSync = exports.posix = exports.posixSync = exports.windows = exports.windowsSync = exports.manual = exports.manualSync = exports.native = exports.nativeSync = exports.assertRimrafOptions = exports.isRimrafOptions = void 0;
 const opt_arg_js_1 = __importDefault(__nccwpck_require__(5565));
 const path_arg_js_1 = __importDefault(__nccwpck_require__(7050));
-/* c8 ignore start */
 const typeOrUndef = (val, t) => typeof val === 'undefined' || typeof val === t;
-/* c8 ignore stop */
 const isRimrafOptions = (o) => !!o &&
     typeof o === 'object' &&
     typeOrUndef(o.preserveRoot, 'boolean') &&
-    typeOrUndef(o.preserveRoot, 'number') &&
+    typeOrUndef(o.tmp, 'string') &&
     typeOrUndef(o.maxRetries, 'number') &&
     typeOrUndef(o.retryDelay, 'number') &&
     typeOrUndef(o.backoff, 'number') &&
     typeOrUndef(o.maxBackoff, 'number');
 exports.isRimrafOptions = isRimrafOptions;
-/* c8 ignore start */
 const assertRimrafOptions = (o) => {
     if (!(0, exports.isRimrafOptions)(o)) {
         throw new Error('invalid rimraf options');
     }
 };
 exports.assertRimrafOptions = assertRimrafOptions;
-/* c8 ignore stop */
 const rimraf_manual_js_1 = __nccwpck_require__(5279);
 const rimraf_move_remove_js_1 = __nccwpck_require__(1689);
 const rimraf_native_js_1 = __nccwpck_require__(3689);
