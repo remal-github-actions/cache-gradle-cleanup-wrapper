@@ -5195,7 +5195,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.rimraf = exports.sync = exports.rimrafSync = exports.moveRemove = exports.moveRemoveSync = exports.posix = exports.posixSync = exports.windows = exports.windowsSync = exports.manual = exports.manualSync = exports.native = exports.nativeSync = exports.assertRimrafOptions = exports.isRimrafOptions = void 0;
-const opt_arg_js_1 = __importDefault(__nccwpck_require__(5565));
+const opt_arg_js_1 = __nccwpck_require__(5565);
 const path_arg_js_1 = __importDefault(__nccwpck_require__(7050));
 const glob_1 = __nccwpck_require__(5571);
 const typeOrUndef = (val, t) => typeof val === 'undefined' || typeof val === t;
@@ -5207,7 +5207,8 @@ const isRimrafOptions = (o) => !!o &&
     typeOrUndef(o.retryDelay, 'number') &&
     typeOrUndef(o.backoff, 'number') &&
     typeOrUndef(o.maxBackoff, 'number') &&
-    (typeOrUndef(o.glob, 'boolean') || (o.glob && typeof o.glob === 'object'));
+    (typeOrUndef(o.glob, 'boolean') || (o.glob && typeof o.glob === 'object')) &&
+    typeOrUndef(o.filter, 'function');
 exports.isRimrafOptions = isRimrafOptions;
 const assertRimrafOptions = (o) => {
     if (!(0, exports.isRimrafOptions)(o)) {
@@ -5222,22 +5223,30 @@ const rimraf_posix_js_1 = __nccwpck_require__(3018);
 const rimraf_windows_js_1 = __nccwpck_require__(2510);
 const use_native_js_1 = __nccwpck_require__(5828);
 const wrap = (fn) => async (path, opt) => {
-    const options = (0, opt_arg_js_1.default)(opt);
+    const options = (0, opt_arg_js_1.optArg)(opt);
     if (options.glob) {
         path = await (0, glob_1.glob)(path, options.glob);
     }
-    await (Array.isArray(path)
-        ? Promise.all(path.map(p => fn((0, path_arg_js_1.default)(p, options), options)))
-        : fn((0, path_arg_js_1.default)(path, options), options));
+    if (Array.isArray(path)) {
+        return !!(await Promise.all(path.map(p => fn((0, path_arg_js_1.default)(p, options), options)))).reduce((a, b) => a && b, true);
+    }
+    else {
+        return !!(await fn((0, path_arg_js_1.default)(path, options), options));
+    }
 };
 const wrapSync = (fn) => (path, opt) => {
-    const options = (0, opt_arg_js_1.default)(opt);
+    const options = (0, opt_arg_js_1.optArgSync)(opt);
     if (options.glob) {
         path = (0, glob_1.globSync)(path, options.glob);
     }
-    return Array.isArray(path)
-        ? path.forEach(p => fn((0, path_arg_js_1.default)(p, options), options))
-        : fn((0, path_arg_js_1.default)(path, options), options);
+    if (Array.isArray(path)) {
+        return !!path
+            .map(p => fn((0, path_arg_js_1.default)(p, options), options))
+            .reduce((a, b) => a && b, true);
+    }
+    else {
+        return !!fn((0, path_arg_js_1.default)(path, options), options);
+    }
 };
 exports.nativeSync = wrapSync(rimraf_native_js_1.rimrafNativeSync);
 exports.native = Object.assign(wrap(rimraf_native_js_1.rimrafNative), { sync: exports.nativeSync });
@@ -5281,12 +5290,14 @@ exports["default"] = exports.rimraf;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.optArgSync = exports.optArg = void 0;
 const index_js_1 = __nccwpck_require__(6284);
-exports["default"] = (opt = {}) => {
+const optArgT = (opt) => {
     (0, index_js_1.assertRimrafOptions)(opt);
     const { glob, ...options } = opt;
-    if (!glob)
+    if (!glob) {
         return options;
+    }
     const globOpt = glob === true
         ? opt.signal
             ? { signal: opt.signal }
@@ -5308,6 +5319,10 @@ exports["default"] = (opt = {}) => {
         },
     };
 };
+const optArg = (opt = {}) => optArgT(opt);
+exports.optArg = optArg;
+const optArgSync = (opt = {}) => optArgT(opt);
+exports.optArgSync = optArgSync;
 //# sourceMappingURL=opt-arg.js.map
 
 /***/ }),
@@ -5321,9 +5336,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const platform_js_1 = __importDefault(__nccwpck_require__(8304));
 const path_1 = __nccwpck_require__(1017);
 const util_1 = __nccwpck_require__(3837);
+const platform_js_1 = __importDefault(__nccwpck_require__(8304));
 const pathArg = (path, opt = {}) => {
     const type = typeof path;
     if (type !== 'string') {
@@ -5580,21 +5595,32 @@ const rimrafMoveRemove = async (path, opt) => {
     const entries = await (0, readdir_or_error_js_1.readdirOrError)(path);
     if (!Array.isArray(entries)) {
         if (entries.code === 'ENOENT') {
-            return;
+            return true;
         }
         if (entries.code !== 'ENOTDIR') {
             throw entries;
         }
-        return await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, unlinkFixEPERM));
+        if (opt.filter && !(await opt.filter(path))) {
+            return false;
+        }
+        await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, unlinkFixEPERM));
+        return true;
     }
-    await Promise.all(entries.map(entry => (0, exports.rimrafMoveRemove)((0, path_1.resolve)(path, entry), opt)));
+    const removedAll = (await Promise.all(entries.map(entry => (0, exports.rimrafMoveRemove)((0, path_1.resolve)(path, entry), opt)))).reduce((a, b) => a && b, true);
+    if (!removedAll) {
+        return false;
+    }
     // we don't ever ACTUALLY try to unlink /, because that can never work
     // but when preserveRoot is false, we could be operating on it.
     // No need to check if preserveRoot is not false.
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return;
+        return false;
     }
-    return await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, rmdir));
+    if (opt.filter && !(await opt.filter(path))) {
+        return false;
+    }
+    await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, rmdir));
+    return true;
 };
 exports.rimrafMoveRemove = rimrafMoveRemove;
 const tmpUnlink = async (path, tmp, rm) => {
@@ -5616,20 +5642,32 @@ const rimrafMoveRemoveSync = (path, opt) => {
     const entries = (0, readdir_or_error_js_1.readdirOrErrorSync)(path);
     if (!Array.isArray(entries)) {
         if (entries.code === 'ENOENT') {
-            return;
+            return true;
         }
         if (entries.code !== 'ENOTDIR') {
             throw entries;
         }
-        return (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, unlinkFixEPERMSync));
+        if (opt.filter && !opt.filter(path)) {
+            return false;
+        }
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, unlinkFixEPERMSync));
+        return true;
     }
+    let removedAll = true;
     for (const entry of entries) {
-        (0, exports.rimrafMoveRemoveSync)((0, path_1.resolve)(path, entry), opt);
+        removedAll = (0, exports.rimrafMoveRemoveSync)((0, path_1.resolve)(path, entry), opt) && removedAll;
+    }
+    if (!removedAll) {
+        return false;
     }
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return;
+        return false;
     }
-    return (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, fs_js_1.rmdirSync));
+    if (opt.filter && !opt.filter(path)) {
+        return false;
+    }
+    (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, fs_js_1.rmdirSync));
+    return true;
 };
 exports.rimrafMoveRemoveSync = rimrafMoveRemoveSync;
 const tmpUnlinkSync = (path, tmp, rmSync) => {
@@ -5650,17 +5688,23 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.rimrafNativeSync = exports.rimrafNative = void 0;
 const fs_js_1 = __nccwpck_require__(1990);
 const { rm } = fs_js_1.promises;
-const rimrafNative = (path, opt) => rm(path, {
-    ...opt,
-    force: true,
-    recursive: true,
-});
+const rimrafNative = async (path, opt) => {
+    await rm(path, {
+        ...opt,
+        force: true,
+        recursive: true,
+    });
+    return true;
+};
 exports.rimrafNative = rimrafNative;
-const rimrafNativeSync = (path, opt) => (0, fs_js_1.rmSync)(path, {
-    ...opt,
-    force: true,
-    recursive: true,
-});
+const rimrafNativeSync = (path, opt) => {
+    (0, fs_js_1.rmSync)(path, {
+        ...opt,
+        force: true,
+        recursive: true,
+    });
+    return true;
+};
 exports.rimrafNativeSync = rimrafNativeSync;
 //# sourceMappingURL=rimraf-native.js.map
 
@@ -5691,21 +5735,32 @@ const rimrafPosix = async (path, opt) => {
     const entries = await (0, readdir_or_error_js_1.readdirOrError)(path);
     if (!Array.isArray(entries)) {
         if (entries.code === 'ENOENT') {
-            return;
+            return true;
         }
         if (entries.code !== 'ENOTDIR') {
             throw entries;
         }
-        return (0, ignore_enoent_js_1.ignoreENOENT)(unlink(path));
+        if (opt.filter && !(await opt.filter(path))) {
+            return false;
+        }
+        await (0, ignore_enoent_js_1.ignoreENOENT)(unlink(path));
+        return true;
     }
-    await Promise.all(entries.map(entry => (0, exports.rimrafPosix)((0, path_1.resolve)(path, entry), opt)));
+    const removedAll = (await Promise.all(entries.map(entry => (0, exports.rimrafPosix)((0, path_1.resolve)(path, entry), opt)))).reduce((a, b) => a && b, true);
+    if (!removedAll) {
+        return false;
+    }
     // we don't ever ACTUALLY try to unlink /, because that can never work
     // but when preserveRoot is false, we could be operating on it.
     // No need to check if preserveRoot is not false.
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return;
+        return false;
     }
-    return (0, ignore_enoent_js_1.ignoreENOENT)(rmdir(path));
+    if (opt.filter && !(await opt.filter(path))) {
+        return false;
+    }
+    await (0, ignore_enoent_js_1.ignoreENOENT)(rmdir(path));
+    return true;
 };
 exports.rimrafPosix = rimrafPosix;
 const rimrafPosixSync = (path, opt) => {
@@ -5715,20 +5770,32 @@ const rimrafPosixSync = (path, opt) => {
     const entries = (0, readdir_or_error_js_1.readdirOrErrorSync)(path);
     if (!Array.isArray(entries)) {
         if (entries.code === 'ENOENT') {
-            return;
+            return true;
         }
         if (entries.code !== 'ENOTDIR') {
             throw entries;
         }
-        return (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.unlinkSync)(path));
+        if (opt.filter && !opt.filter(path)) {
+            return false;
+        }
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.unlinkSync)(path));
+        return true;
     }
+    let removedAll = true;
     for (const entry of entries) {
-        (0, exports.rimrafPosixSync)((0, path_1.resolve)(path, entry), opt);
+        removedAll = (0, exports.rimrafPosixSync)((0, path_1.resolve)(path, entry), opt) && removedAll;
     }
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return;
+        return false;
     }
-    return (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.rmdirSync)(path));
+    if (!removedAll) {
+        return false;
+    }
+    if (opt.filter && !opt.filter(path)) {
+        return false;
+    }
+    (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.rmdirSync)(path));
+    return true;
 };
 exports.rimrafPosixSync = rimrafPosixSync;
 //# sourceMappingURL=rimraf-posix.js.map
@@ -5769,12 +5836,14 @@ const rimrafWindowsDirMoveRemoveFallback = async (path, opt) => {
         throw opt.signal.reason;
     }
     /* c8 ignore stop */
+    // already filtered, remove from options so we don't call unnecessarily
+    const { filter, ...options } = opt;
     try {
-        await rimrafWindowsDir(path, opt);
+        return await rimrafWindowsDir(path, options);
     }
     catch (er) {
         if (er?.code === 'ENOTEMPTY') {
-            return await (0, rimraf_move_remove_js_1.rimrafMoveRemove)(path, opt);
+            return await (0, rimraf_move_remove_js_1.rimrafMoveRemove)(path, options);
         }
         throw er;
     }
@@ -5783,12 +5852,15 @@ const rimrafWindowsDirMoveRemoveFallbackSync = (path, opt) => {
     if (opt?.signal?.aborted) {
         throw opt.signal.reason;
     }
+    // already filtered, remove from options so we don't call unnecessarily
+    const { filter, ...options } = opt;
     try {
-        rimrafWindowsDirSync(path, opt);
+        return rimrafWindowsDirSync(path, options);
     }
     catch (er) {
-        if (er?.code === 'ENOTEMPTY') {
-            return (0, rimraf_move_remove_js_1.rimrafMoveRemoveSync)(path, opt);
+        const fer = er;
+        if (fer?.code === 'ENOTEMPTY') {
+            return (0, rimraf_move_remove_js_1.rimrafMoveRemoveSync)(path, options);
         }
         throw er;
     }
@@ -5807,24 +5879,36 @@ const rimrafWindows = async (path, opt, state = START) => {
     const entries = await (0, readdir_or_error_js_1.readdirOrError)(path);
     if (!Array.isArray(entries)) {
         if (entries.code === 'ENOENT') {
-            return;
+            return true;
         }
         if (entries.code !== 'ENOTDIR') {
             throw entries;
         }
+        if (opt.filter && !(await opt.filter(path))) {
+            return false;
+        }
         // is a file
-        return (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsFile(path, opt));
+        await (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsFile(path, opt));
+        return true;
     }
-    await Promise.all(entries.map(entry => (0, exports.rimrafWindows)((0, path_1.resolve)(path, entry), opt, state === START ? CHILD : state)));
+    const s = state === START ? CHILD : state;
+    const removedAll = (await Promise.all(entries.map(entry => (0, exports.rimrafWindows)((0, path_1.resolve)(path, entry), opt, s)))).reduce((a, b) => a && b, true);
     if (state === START) {
         return (0, exports.rimrafWindows)(path, opt, FINISH);
     }
     else if (state === FINISH) {
         if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-            return;
+            return false;
         }
-        return (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsDirMoveRemoveFallback(path, opt));
+        if (!removedAll) {
+            return false;
+        }
+        if (opt.filter && !(await opt.filter(path))) {
+            return false;
+        }
+        await (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsDirMoveRemoveFallback(path, opt));
     }
+    return true;
 };
 exports.rimrafWindows = rimrafWindows;
 const rimrafWindowsSync = (path, opt, state = START) => {
@@ -5834,29 +5918,41 @@ const rimrafWindowsSync = (path, opt, state = START) => {
     const entries = (0, readdir_or_error_js_1.readdirOrErrorSync)(path);
     if (!Array.isArray(entries)) {
         if (entries.code === 'ENOENT') {
-            return;
+            return true;
         }
         if (entries.code !== 'ENOTDIR') {
             throw entries;
         }
+        if (opt.filter && !opt.filter(path)) {
+            return false;
+        }
         // is a file
-        return (0, ignore_enoent_js_1.ignoreENOENTSync)(() => rimrafWindowsFileSync(path, opt));
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => rimrafWindowsFileSync(path, opt));
+        return true;
     }
+    let removedAll = true;
     for (const entry of entries) {
         const s = state === START ? CHILD : state;
-        (0, exports.rimrafWindowsSync)((0, path_1.resolve)(path, entry), opt, s);
+        removedAll = (0, exports.rimrafWindowsSync)((0, path_1.resolve)(path, entry), opt, s) && removedAll;
     }
     if (state === START) {
         return (0, exports.rimrafWindowsSync)(path, opt, FINISH);
     }
     else if (state === FINISH) {
         if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-            return;
+            return false;
         }
-        return (0, ignore_enoent_js_1.ignoreENOENTSync)(() => {
+        if (!removedAll) {
+            return false;
+        }
+        if (opt.filter && !opt.filter(path)) {
+            return false;
+        }
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => {
             rimrafWindowsDirMoveRemoveFallbackSync(path, opt);
         });
     }
+    return true;
 };
 exports.rimrafWindowsSync = rimrafWindowsSync;
 //# sourceMappingURL=rimraf-windows.js.map
@@ -5879,8 +5975,12 @@ const hasNative = +versArr[0] > 14 || (+versArr[0] === 14 && +versArr[1] >= 14);
 // we do NOT use native by default on Windows, because Node's native
 // rm implementation is less advanced.  Change this code if that changes.
 const platform_js_1 = __importDefault(__nccwpck_require__(8304));
-exports.useNative = !hasNative || platform_js_1.default === 'win32' ? () => false : opt => !opt?.signal;
-exports.useNativeSync = !hasNative || platform_js_1.default === 'win32' ? () => false : opt => !opt?.signal;
+exports.useNative = !hasNative || platform_js_1.default === 'win32'
+    ? () => false
+    : opt => !opt?.signal && !opt?.filter;
+exports.useNativeSync = !hasNative || platform_js_1.default === 'win32'
+    ? () => false
+    : opt => !opt?.signal && !opt?.filter;
 //# sourceMappingURL=use-native.js.map
 
 /***/ }),
