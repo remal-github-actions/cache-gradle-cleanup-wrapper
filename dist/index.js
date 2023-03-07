@@ -5105,29 +5105,33 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.promises = exports.unlinkSync = exports.statSync = exports.rmSync = exports.rmdirSync = exports.renameSync = exports.readdirSync = exports.mkdirSync = exports.chmodSync = void 0;
+exports.promises = exports.readdirSync = exports.unlinkSync = exports.lstatSync = exports.statSync = exports.rmSync = exports.rmdirSync = exports.renameSync = exports.mkdirSync = exports.chmodSync = void 0;
 const fs_1 = __importDefault(__nccwpck_require__(7147));
 // sync ones just take the sync version from node
 var fs_2 = __nccwpck_require__(7147);
 Object.defineProperty(exports, "chmodSync", ({ enumerable: true, get: function () { return fs_2.chmodSync; } }));
 Object.defineProperty(exports, "mkdirSync", ({ enumerable: true, get: function () { return fs_2.mkdirSync; } }));
-Object.defineProperty(exports, "readdirSync", ({ enumerable: true, get: function () { return fs_2.readdirSync; } }));
 Object.defineProperty(exports, "renameSync", ({ enumerable: true, get: function () { return fs_2.renameSync; } }));
 Object.defineProperty(exports, "rmdirSync", ({ enumerable: true, get: function () { return fs_2.rmdirSync; } }));
 Object.defineProperty(exports, "rmSync", ({ enumerable: true, get: function () { return fs_2.rmSync; } }));
 Object.defineProperty(exports, "statSync", ({ enumerable: true, get: function () { return fs_2.statSync; } }));
+Object.defineProperty(exports, "lstatSync", ({ enumerable: true, get: function () { return fs_2.lstatSync; } }));
 Object.defineProperty(exports, "unlinkSync", ({ enumerable: true, get: function () { return fs_2.unlinkSync; } }));
+const fs_3 = __nccwpck_require__(7147);
+const readdirSync = (path) => (0, fs_3.readdirSync)(path, { withFileTypes: true });
+exports.readdirSync = readdirSync;
 // unrolled for better inlining, this seems to get better performance
 // than something like:
 // const makeCb = (res, rej) => (er, ...d) => er ? rej(er) : res(...d)
 // which would be a bit cleaner.
 const chmod = (path, mode) => new Promise((res, rej) => fs_1.default.chmod(path, mode, (er, ...d) => (er ? rej(er) : res(...d))));
 const mkdir = (path, options) => new Promise((res, rej) => fs_1.default.mkdir(path, options, (er, made) => (er ? rej(er) : res(made))));
-const readdir = (path) => new Promise((res, rej) => fs_1.default.readdir(path, (er, data) => (er ? rej(er) : res(data))));
+const readdir = (path) => new Promise((res, rej) => fs_1.default.readdir(path, { withFileTypes: true }, (er, data) => er ? rej(er) : res(data)));
 const rename = (oldPath, newPath) => new Promise((res, rej) => fs_1.default.rename(oldPath, newPath, (er, ...d) => (er ? rej(er) : res(...d))));
 const rm = (path, options) => new Promise((res, rej) => fs_1.default.rm(path, options, (er, ...d) => (er ? rej(er) : res(...d))));
 const rmdir = (path) => new Promise((res, rej) => fs_1.default.rmdir(path, (er, ...d) => (er ? rej(er) : res(...d))));
 const stat = (path) => new Promise((res, rej) => fs_1.default.stat(path, (er, data) => (er ? rej(er) : res(data))));
+const lstat = (path) => new Promise((res, rej) => fs_1.default.lstat(path, (er, data) => (er ? rej(er) : res(data))));
 const unlink = (path) => new Promise((res, rej) => fs_1.default.unlink(path, (er, ...d) => (er ? rej(er) : res(...d))));
 exports.promises = {
     chmod,
@@ -5137,6 +5141,7 @@ exports.promises = {
     rm,
     rmdir,
     stat,
+    lstat,
     unlink,
 };
 //# sourceMappingURL=fs.js.map
@@ -5542,7 +5547,7 @@ const path_1 = __nccwpck_require__(1017);
 const default_tmp_js_1 = __nccwpck_require__(1574);
 const ignore_enoent_js_1 = __nccwpck_require__(1562);
 const fs_js_1 = __nccwpck_require__(1990);
-const { rename, unlink, rmdir, chmod } = fs_js_1.promises;
+const { lstat, rename, unlink, rmdir, chmod } = fs_js_1.promises;
 const readdir_or_error_js_1 = __nccwpck_require__(9443);
 // crypto.randomBytes is much slower, and Math.random() is enough here
 const uniqueFilename = (path) => `.${(0, path_1.basename)(path)}.${Math.random()}`;
@@ -5586,27 +5591,47 @@ const rimrafMoveRemove = async (path, opt) => {
     if (opt?.signal?.aborted) {
         throw opt.signal.reason;
     }
+    try {
+        return await rimrafMoveRemoveDir(path, opt, await lstat(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafMoveRemove = rimrafMoveRemove;
+const rimrafMoveRemoveDir = async (path, opt, ent) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
     if (!opt.tmp) {
-        return (0, exports.rimrafMoveRemove)(path, { ...opt, tmp: await (0, default_tmp_js_1.defaultTmp)(path) });
+        return rimrafMoveRemoveDir(path, { ...opt, tmp: await (0, default_tmp_js_1.defaultTmp)(path) }, ent);
     }
     if (path === opt.tmp && (0, path_1.parse)(path).root !== path) {
         throw new Error('cannot delete temp directory used for deletion');
     }
-    const entries = await (0, readdir_or_error_js_1.readdirOrError)(path);
+    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
     if (!Array.isArray(entries)) {
-        if (entries.code === 'ENOENT') {
-            return true;
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
         }
-        if (entries.code !== 'ENOTDIR') {
-            throw entries;
-        }
+        /* c8 ignore stop */
         if (opt.filter && !(await opt.filter(path))) {
             return false;
         }
         await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, unlinkFixEPERM));
         return true;
     }
-    const removedAll = (await Promise.all(entries.map(entry => (0, exports.rimrafMoveRemove)((0, path_1.resolve)(path, entry), opt)))).reduce((a, b) => a && b, true);
+    const removedAll = (await Promise.all(entries.map(ent => rimrafMoveRemoveDir((0, path_1.resolve)(path, ent.name), opt, ent)))).reduce((a, b) => a && b, true);
     if (!removedAll) {
         return false;
     }
@@ -5622,7 +5647,6 @@ const rimrafMoveRemove = async (path, opt) => {
     await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, rmdir));
     return true;
 };
-exports.rimrafMoveRemove = rimrafMoveRemove;
 const tmpUnlink = async (path, tmp, rm) => {
     const tmpFile = (0, path_1.resolve)(tmp, uniqueFilename(path));
     await rename(path, tmpFile);
@@ -5632,21 +5656,41 @@ const rimrafMoveRemoveSync = (path, opt) => {
     if (opt?.signal?.aborted) {
         throw opt.signal.reason;
     }
+    try {
+        return rimrafMoveRemoveDirSync(path, opt, (0, fs_js_1.lstatSync)(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafMoveRemoveSync = rimrafMoveRemoveSync;
+const rimrafMoveRemoveDirSync = (path, opt, ent) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
     if (!opt.tmp) {
-        return (0, exports.rimrafMoveRemoveSync)(path, { ...opt, tmp: (0, default_tmp_js_1.defaultTmpSync)(path) });
+        return rimrafMoveRemoveDirSync(path, { ...opt, tmp: (0, default_tmp_js_1.defaultTmpSync)(path) }, ent);
     }
     const tmp = opt.tmp;
     if (path === opt.tmp && (0, path_1.parse)(path).root !== path) {
         throw new Error('cannot delete temp directory used for deletion');
     }
-    const entries = (0, readdir_or_error_js_1.readdirOrErrorSync)(path);
+    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
     if (!Array.isArray(entries)) {
-        if (entries.code === 'ENOENT') {
-            return true;
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
         }
-        if (entries.code !== 'ENOTDIR') {
-            throw entries;
-        }
+        /* c8 ignore stop */
         if (opt.filter && !opt.filter(path)) {
             return false;
         }
@@ -5654,8 +5698,9 @@ const rimrafMoveRemoveSync = (path, opt) => {
         return true;
     }
     let removedAll = true;
-    for (const entry of entries) {
-        removedAll = (0, exports.rimrafMoveRemoveSync)((0, path_1.resolve)(path, entry), opt) && removedAll;
+    for (const ent of entries) {
+        const p = (0, path_1.resolve)(path, ent.name);
+        removedAll = rimrafMoveRemoveDirSync(p, opt, ent) && removedAll;
     }
     if (!removedAll) {
         return false;
@@ -5669,7 +5714,6 @@ const rimrafMoveRemoveSync = (path, opt) => {
     (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, fs_js_1.rmdirSync));
     return true;
 };
-exports.rimrafMoveRemoveSync = rimrafMoveRemoveSync;
 const tmpUnlinkSync = (path, tmp, rmSync) => {
     const tmpFile = (0, path_1.resolve)(tmp, uniqueFilename(path));
     (0, fs_js_1.renameSync)(path, tmpFile);
@@ -5717,14 +5761,13 @@ exports.rimrafNativeSync = rimrafNativeSync;
 
 // the simple recursive removal, where unlink and rmdir are atomic
 // Note that this approach does NOT work on Windows!
-// We rmdir before unlink even though that is arguably less efficient
-// (since the average folder contains >1 file, it means more system
-// calls), because sunos will let root unlink a directory, and some
+// We stat first and only unlink if the Dirent isn't a directory,
+// because sunos will let root unlink a directory, and some
 // SUPER weird breakage happens as a result.
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.rimrafPosixSync = exports.rimrafPosix = void 0;
 const fs_js_1 = __nccwpck_require__(1990);
-const { rmdir, unlink } = fs_js_1.promises;
+const { lstat, rmdir, unlink } = fs_js_1.promises;
 const path_1 = __nccwpck_require__(1017);
 const readdir_or_error_js_1 = __nccwpck_require__(9443);
 const ignore_enoent_js_1 = __nccwpck_require__(1562);
@@ -5732,21 +5775,55 @@ const rimrafPosix = async (path, opt) => {
     if (opt?.signal?.aborted) {
         throw opt.signal.reason;
     }
-    const entries = await (0, readdir_or_error_js_1.readdirOrError)(path);
-    if (!Array.isArray(entries)) {
-        if (entries.code === 'ENOENT') {
+    try {
+        return await rimrafPosixDir(path, opt, await lstat(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
             return true;
+        throw er;
+    }
+};
+exports.rimrafPosix = rimrafPosix;
+const rimrafPosixSync = (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return rimrafPosixDirSync(path, opt, (0, fs_js_1.lstatSync)(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafPosixSync = rimrafPosixSync;
+const rimrafPosixDir = async (path, opt, ent) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
         }
-        if (entries.code !== 'ENOTDIR') {
-            throw entries;
-        }
+        /* c8 ignore stop */
         if (opt.filter && !(await opt.filter(path))) {
             return false;
         }
         await (0, ignore_enoent_js_1.ignoreENOENT)(unlink(path));
         return true;
     }
-    const removedAll = (await Promise.all(entries.map(entry => (0, exports.rimrafPosix)((0, path_1.resolve)(path, entry), opt)))).reduce((a, b) => a && b, true);
+    const removedAll = (await Promise.all(entries.map(ent => rimrafPosixDir((0, path_1.resolve)(path, ent.name), opt, ent)))).reduce((a, b) => a && b, true);
     if (!removedAll) {
         return false;
     }
@@ -5762,19 +5839,24 @@ const rimrafPosix = async (path, opt) => {
     await (0, ignore_enoent_js_1.ignoreENOENT)(rmdir(path));
     return true;
 };
-exports.rimrafPosix = rimrafPosix;
-const rimrafPosixSync = (path, opt) => {
+const rimrafPosixDirSync = (path, opt, ent) => {
     if (opt?.signal?.aborted) {
         throw opt.signal.reason;
     }
-    const entries = (0, readdir_or_error_js_1.readdirOrErrorSync)(path);
+    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
     if (!Array.isArray(entries)) {
-        if (entries.code === 'ENOENT') {
-            return true;
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
         }
-        if (entries.code !== 'ENOTDIR') {
-            throw entries;
-        }
+        /* c8 ignore stop */
         if (opt.filter && !opt.filter(path)) {
             return false;
         }
@@ -5782,8 +5864,9 @@ const rimrafPosixSync = (path, opt) => {
         return true;
     }
     let removedAll = true;
-    for (const entry of entries) {
-        removedAll = (0, exports.rimrafPosixSync)((0, path_1.resolve)(path, entry), opt) && removedAll;
+    for (const ent of entries) {
+        const p = (0, path_1.resolve)(path, ent.name);
+        removedAll = rimrafPosixDirSync(p, opt, ent) && removedAll;
     }
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
         return false;
@@ -5797,7 +5880,6 @@ const rimrafPosixSync = (path, opt) => {
     (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.rmdirSync)(path));
     return true;
 };
-exports.rimrafPosixSync = rimrafPosixSync;
 //# sourceMappingURL=rimraf-posix.js.map
 
 /***/ }),
@@ -5825,11 +5907,11 @@ const ignore_enoent_js_1 = __nccwpck_require__(1562);
 const readdir_or_error_js_1 = __nccwpck_require__(9443);
 const retry_busy_js_1 = __nccwpck_require__(9373);
 const rimraf_move_remove_js_1 = __nccwpck_require__(1689);
-const { unlink, rmdir } = fs_js_1.promises;
+const { unlink, rmdir, lstat } = fs_js_1.promises;
 const rimrafWindowsFile = (0, retry_busy_js_1.retryBusy)((0, fix_eperm_js_1.fixEPERM)(unlink));
 const rimrafWindowsFileSync = (0, retry_busy_js_1.retryBusySync)((0, fix_eperm_js_1.fixEPERMSync)(fs_js_1.unlinkSync));
-const rimrafWindowsDir = (0, retry_busy_js_1.retryBusy)((0, fix_eperm_js_1.fixEPERM)(rmdir));
-const rimrafWindowsDirSync = (0, retry_busy_js_1.retryBusySync)((0, fix_eperm_js_1.fixEPERMSync)(fs_js_1.rmdirSync));
+const rimrafWindowsDirRetry = (0, retry_busy_js_1.retryBusy)((0, fix_eperm_js_1.fixEPERM)(rmdir));
+const rimrafWindowsDirRetrySync = (0, retry_busy_js_1.retryBusySync)((0, fix_eperm_js_1.fixEPERMSync)(fs_js_1.rmdirSync));
 const rimrafWindowsDirMoveRemoveFallback = async (path, opt) => {
     /* c8 ignore start */
     if (opt?.signal?.aborted) {
@@ -5839,7 +5921,7 @@ const rimrafWindowsDirMoveRemoveFallback = async (path, opt) => {
     // already filtered, remove from options so we don't call unnecessarily
     const { filter, ...options } = opt;
     try {
-        return await rimrafWindowsDir(path, options);
+        return await rimrafWindowsDirRetry(path, options);
     }
     catch (er) {
         if (er?.code === 'ENOTEMPTY') {
@@ -5855,7 +5937,7 @@ const rimrafWindowsDirMoveRemoveFallbackSync = (path, opt) => {
     // already filtered, remove from options so we don't call unnecessarily
     const { filter, ...options } = opt;
     try {
-        return rimrafWindowsDirSync(path, options);
+        return rimrafWindowsDirRetrySync(path, options);
     }
     catch (er) {
         const fer = er;
@@ -5868,22 +5950,52 @@ const rimrafWindowsDirMoveRemoveFallbackSync = (path, opt) => {
 const START = Symbol('start');
 const CHILD = Symbol('child');
 const FINISH = Symbol('finish');
-const states = new Set([START, CHILD, FINISH]);
-const rimrafWindows = async (path, opt, state = START) => {
+const rimrafWindows = async (path, opt) => {
     if (opt?.signal?.aborted) {
         throw opt.signal.reason;
     }
-    if (!states.has(state)) {
-        throw new TypeError('invalid third argument passed to rimraf');
+    try {
+        return await rimrafWindowsDir(path, opt, await lstat(path), START);
     }
-    const entries = await (0, readdir_or_error_js_1.readdirOrError)(path);
-    if (!Array.isArray(entries)) {
-        if (entries.code === 'ENOENT') {
+    catch (er) {
+        if (er?.code === 'ENOENT')
             return true;
+        throw er;
+    }
+};
+exports.rimrafWindows = rimrafWindows;
+const rimrafWindowsSync = (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return rimrafWindowsDirSync(path, opt, (0, fs_js_1.lstatSync)(path), START);
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafWindowsSync = rimrafWindowsSync;
+const rimrafWindowsDir = async (path, opt, ent, state = START) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
         }
-        if (entries.code !== 'ENOTDIR') {
-            throw entries;
-        }
+        /* c8 ignore stop */
         if (opt.filter && !(await opt.filter(path))) {
             return false;
         }
@@ -5892,9 +6004,9 @@ const rimrafWindows = async (path, opt, state = START) => {
         return true;
     }
     const s = state === START ? CHILD : state;
-    const removedAll = (await Promise.all(entries.map(entry => (0, exports.rimrafWindows)((0, path_1.resolve)(path, entry), opt, s)))).reduce((a, b) => a && b, true);
+    const removedAll = (await Promise.all(entries.map(ent => rimrafWindowsDir((0, path_1.resolve)(path, ent.name), opt, ent, s)))).reduce((a, b) => a && b, true);
     if (state === START) {
-        return (0, exports.rimrafWindows)(path, opt, FINISH);
+        return rimrafWindowsDir(path, opt, ent, FINISH);
     }
     else if (state === FINISH) {
         if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
@@ -5910,19 +6022,21 @@ const rimrafWindows = async (path, opt, state = START) => {
     }
     return true;
 };
-exports.rimrafWindows = rimrafWindows;
-const rimrafWindowsSync = (path, opt, state = START) => {
-    if (!states.has(state)) {
-        throw new TypeError('invalid third argument passed to rimraf');
-    }
-    const entries = (0, readdir_or_error_js_1.readdirOrErrorSync)(path);
+const rimrafWindowsDirSync = (path, opt, ent, state = START) => {
+    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
     if (!Array.isArray(entries)) {
-        if (entries.code === 'ENOENT') {
-            return true;
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
         }
-        if (entries.code !== 'ENOTDIR') {
-            throw entries;
-        }
+        /* c8 ignore stop */
         if (opt.filter && !opt.filter(path)) {
             return false;
         }
@@ -5931,12 +6045,13 @@ const rimrafWindowsSync = (path, opt, state = START) => {
         return true;
     }
     let removedAll = true;
-    for (const entry of entries) {
+    for (const ent of entries) {
         const s = state === START ? CHILD : state;
-        removedAll = (0, exports.rimrafWindowsSync)((0, path_1.resolve)(path, entry), opt, s) && removedAll;
+        const p = (0, path_1.resolve)(path, ent.name);
+        removedAll = rimrafWindowsDirSync(p, opt, ent, s) && removedAll;
     }
     if (state === START) {
-        return (0, exports.rimrafWindowsSync)(path, opt, FINISH);
+        return rimrafWindowsDirSync(path, opt, ent, FINISH);
     }
     else if (state === FINISH) {
         if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
@@ -5954,7 +6069,6 @@ const rimrafWindowsSync = (path, opt, state = START) => {
     }
     return true;
 };
-exports.rimrafWindowsSync = rimrafWindowsSync;
 //# sourceMappingURL=rimraf-windows.js.map
 
 /***/ }),
