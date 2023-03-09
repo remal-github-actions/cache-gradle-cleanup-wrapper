@@ -5625,7 +5625,7 @@ const rimrafMoveRemoveDir = async (path, opt, ent) => {
             }
         }
         /* c8 ignore stop */
-        if (opt.filter && !(await opt.filter(path))) {
+        if (opt.filter && !(await opt.filter(path, ent))) {
             return false;
         }
         await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, unlinkFixEPERM));
@@ -5641,7 +5641,7 @@ const rimrafMoveRemoveDir = async (path, opt, ent) => {
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
         return false;
     }
-    if (opt.filter && !(await opt.filter(path))) {
+    if (opt.filter && !(await opt.filter(path, ent))) {
         return false;
     }
     await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, rmdir));
@@ -5691,7 +5691,7 @@ const rimrafMoveRemoveDirSync = (path, opt, ent) => {
             }
         }
         /* c8 ignore stop */
-        if (opt.filter && !opt.filter(path)) {
+        if (opt.filter && !opt.filter(path, ent)) {
             return false;
         }
         (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, unlinkFixEPERMSync));
@@ -5708,7 +5708,7 @@ const rimrafMoveRemoveDirSync = (path, opt, ent) => {
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
         return false;
     }
-    if (opt.filter && !opt.filter(path)) {
+    if (opt.filter && !opt.filter(path, ent)) {
         return false;
     }
     (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, fs_js_1.rmdirSync));
@@ -5817,7 +5817,7 @@ const rimrafPosixDir = async (path, opt, ent) => {
             }
         }
         /* c8 ignore stop */
-        if (opt.filter && !(await opt.filter(path))) {
+        if (opt.filter && !(await opt.filter(path, ent))) {
             return false;
         }
         await (0, ignore_enoent_js_1.ignoreENOENT)(unlink(path));
@@ -5833,7 +5833,7 @@ const rimrafPosixDir = async (path, opt, ent) => {
     if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
         return false;
     }
-    if (opt.filter && !(await opt.filter(path))) {
+    if (opt.filter && !(await opt.filter(path, ent))) {
         return false;
     }
     await (0, ignore_enoent_js_1.ignoreENOENT)(rmdir(path));
@@ -5857,7 +5857,7 @@ const rimrafPosixDirSync = (path, opt, ent) => {
             }
         }
         /* c8 ignore stop */
-        if (opt.filter && !opt.filter(path)) {
+        if (opt.filter && !opt.filter(path, ent)) {
             return false;
         }
         (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.unlinkSync)(path));
@@ -5874,7 +5874,7 @@ const rimrafPosixDirSync = (path, opt, ent) => {
     if (!removedAll) {
         return false;
     }
-    if (opt.filter && !opt.filter(path)) {
+    if (opt.filter && !opt.filter(path, ent)) {
         return false;
     }
     (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.rmdirSync)(path));
@@ -5996,7 +5996,7 @@ const rimrafWindowsDir = async (path, opt, ent, state = START) => {
             }
         }
         /* c8 ignore stop */
-        if (opt.filter && !(await opt.filter(path))) {
+        if (opt.filter && !(await opt.filter(path, ent))) {
             return false;
         }
         // is a file
@@ -6015,7 +6015,7 @@ const rimrafWindowsDir = async (path, opt, ent, state = START) => {
         if (!removedAll) {
             return false;
         }
-        if (opt.filter && !(await opt.filter(path))) {
+        if (opt.filter && !(await opt.filter(path, ent))) {
             return false;
         }
         await (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsDirMoveRemoveFallback(path, opt));
@@ -6037,7 +6037,7 @@ const rimrafWindowsDirSync = (path, opt, ent, state = START) => {
             }
         }
         /* c8 ignore stop */
-        if (opt.filter && !opt.filter(path)) {
+        if (opt.filter && !opt.filter(path, ent)) {
             return false;
         }
         // is a file
@@ -6060,7 +6060,7 @@ const rimrafWindowsDirSync = (path, opt, ent, state = START) => {
         if (!removedAll) {
             return false;
         }
-        if (opt.filter && !opt.filter(path)) {
+        if (opt.filter && !opt.filter(path, ent)) {
             return false;
         }
         (0, ignore_enoent_js_1.ignoreENOENTSync)(() => {
