@@ -3093,7 +3093,6 @@ function range(a, b, str) {
 /***/ 3717:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
-var concatMap = __nccwpck_require__(6891);
 var balanced = __nccwpck_require__(9417);
 
 module.exports = expandTop;
@@ -3174,10 +3173,6 @@ function expandTop(str) {
   return expand(escapeBraces(str), true).map(unescapeBraces);
 }
 
-function identity(e) {
-  return e;
-}
-
 function embrace(str) {
   return '{' + str + '}';
 }
@@ -3196,42 +3191,7 @@ function expand(str, isTop) {
   var expansions = [];
 
   var m = balanced('{', '}', str);
-  if (!m || /\$$/.test(m.pre)) return [str];
-
-  var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
-  var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
-  var isSequence = isNumericSequence || isAlphaSequence;
-  var isOptions = m.body.indexOf(',') >= 0;
-  if (!isSequence && !isOptions) {
-    // {a},b}
-    if (m.post.match(/,.*\}/)) {
-      str = m.pre + '{' + m.body + escClose + m.post;
-      return expand(str);
-    }
-    return [str];
-  }
-
-  var n;
-  if (isSequence) {
-    n = m.body.split(/\.\./);
-  } else {
-    n = parseCommaParts(m.body);
-    if (n.length === 1) {
-      // x{{a,b}}y ==> x{a}y x{b}y
-      n = expand(n[0], false).map(embrace);
-      if (n.length === 1) {
-        var post = m.post.length
-          ? expand(m.post, false)
-          : [''];
-        return post.map(function(p) {
-          return m.pre + n[0] + p;
-        });
-      }
-    }
-  }
-
-  // at this point, n is the parts, and we know it's not a comma set
-  // with a single entry.
+  if (!m) return [str];
 
   // no need to expand pre, since it is guaranteed to be free of brace-sets
   var pre = m.pre;
@@ -3239,55 +3199,97 @@ function expand(str, isTop) {
     ? expand(m.post, false)
     : [''];
 
-  var N;
-
-  if (isSequence) {
-    var x = numeric(n[0]);
-    var y = numeric(n[1]);
-    var width = Math.max(n[0].length, n[1].length)
-    var incr = n.length == 3
-      ? Math.abs(numeric(n[2]))
-      : 1;
-    var test = lte;
-    var reverse = y < x;
-    if (reverse) {
-      incr *= -1;
-      test = gte;
-    }
-    var pad = n.some(isPadded);
-
-    N = [];
-
-    for (var i = x; test(i, y); i += incr) {
-      var c;
-      if (isAlphaSequence) {
-        c = String.fromCharCode(i);
-        if (c === '\\')
-          c = '';
-      } else {
-        c = String(i);
-        if (pad) {
-          var need = width - c.length;
-          if (need > 0) {
-            var z = new Array(need + 1).join('0');
-            if (i < 0)
-              c = '-' + z + c.slice(1);
-            else
-              c = z + c;
-          }
-        }
-      }
-      N.push(c);
+  if (/\$$/.test(m.pre)) {    
+    for (var k = 0; k < post.length; k++) {
+      var expansion = pre+ '{' + m.body + '}' + post[k];
+      expansions.push(expansion);
     }
   } else {
-    N = concatMap(n, function(el) { return expand(el, false) });
-  }
+    var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
+    var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
+    var isSequence = isNumericSequence || isAlphaSequence;
+    var isOptions = m.body.indexOf(',') >= 0;
+    if (!isSequence && !isOptions) {
+      // {a},b}
+      if (m.post.match(/,.*\}/)) {
+        str = m.pre + '{' + m.body + escClose + m.post;
+        return expand(str);
+      }
+      return [str];
+    }
 
-  for (var j = 0; j < N.length; j++) {
-    for (var k = 0; k < post.length; k++) {
-      var expansion = pre + N[j] + post[k];
-      if (!isTop || isSequence || expansion)
-        expansions.push(expansion);
+    var n;
+    if (isSequence) {
+      n = m.body.split(/\.\./);
+    } else {
+      n = parseCommaParts(m.body);
+      if (n.length === 1) {
+        // x{{a,b}}y ==> x{a}y x{b}y
+        n = expand(n[0], false).map(embrace);
+        if (n.length === 1) {
+          return post.map(function(p) {
+            return m.pre + n[0] + p;
+          });
+        }
+      }
+    }
+
+    // at this point, n is the parts, and we know it's not a comma set
+    // with a single entry.
+    var N;
+
+    if (isSequence) {
+      var x = numeric(n[0]);
+      var y = numeric(n[1]);
+      var width = Math.max(n[0].length, n[1].length)
+      var incr = n.length == 3
+        ? Math.abs(numeric(n[2]))
+        : 1;
+      var test = lte;
+      var reverse = y < x;
+      if (reverse) {
+        incr *= -1;
+        test = gte;
+      }
+      var pad = n.some(isPadded);
+
+      N = [];
+
+      for (var i = x; test(i, y); i += incr) {
+        var c;
+        if (isAlphaSequence) {
+          c = String.fromCharCode(i);
+          if (c === '\\')
+            c = '';
+        } else {
+          c = String(i);
+          if (pad) {
+            var need = width - c.length;
+            if (need > 0) {
+              var z = new Array(need + 1).join('0');
+              if (i < 0)
+                c = '-' + z + c.slice(1);
+              else
+                c = z + c;
+            }
+          }
+        }
+        N.push(c);
+      }
+    } else {
+      N = [];
+
+      for (var j = 0; j < n.length; j++) {
+        N.push.apply(N, expand(n[j], false));
+      }
+    }
+
+    for (var j = 0; j < N.length; j++) {
+      for (var k = 0; k < post.length; k++) {
+        var expansion = pre + N[j] + post[k];
+        if (!isTop || isSequence || expansion)
+          expansions.push(expansion);
+      }
     }
   }
 
@@ -3330,7 +3332,7 @@ var path = (function () { try { return __nccwpck_require__(1017) } catch (e) {}}
 minimatch.sep = path.sep
 
 var GLOBSTAR = minimatch.GLOBSTAR = Minimatch.GLOBSTAR = {}
-var expand = __nccwpck_require__(3717)
+var expand = __nccwpck_require__(8184)
 
 var plTypes = {
   '!': { open: '(?:(?!(?:', close: '))[^/]*?)'},
@@ -4272,7 +4274,215 @@ function regExpEscape (s) {
 
 /***/ }),
 
-/***/ 1077:
+/***/ 8184:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+var concatMap = __nccwpck_require__(6891);
+var balanced = __nccwpck_require__(9417);
+
+module.exports = expandTop;
+
+var escSlash = '\0SLASH'+Math.random()+'\0';
+var escOpen = '\0OPEN'+Math.random()+'\0';
+var escClose = '\0CLOSE'+Math.random()+'\0';
+var escComma = '\0COMMA'+Math.random()+'\0';
+var escPeriod = '\0PERIOD'+Math.random()+'\0';
+
+function numeric(str) {
+  return parseInt(str, 10) == str
+    ? parseInt(str, 10)
+    : str.charCodeAt(0);
+}
+
+function escapeBraces(str) {
+  return str.split('\\\\').join(escSlash)
+            .split('\\{').join(escOpen)
+            .split('\\}').join(escClose)
+            .split('\\,').join(escComma)
+            .split('\\.').join(escPeriod);
+}
+
+function unescapeBraces(str) {
+  return str.split(escSlash).join('\\')
+            .split(escOpen).join('{')
+            .split(escClose).join('}')
+            .split(escComma).join(',')
+            .split(escPeriod).join('.');
+}
+
+
+// Basically just str.split(","), but handling cases
+// where we have nested braced sections, which should be
+// treated as individual members, like {a,{b,c},d}
+function parseCommaParts(str) {
+  if (!str)
+    return [''];
+
+  var parts = [];
+  var m = balanced('{', '}', str);
+
+  if (!m)
+    return str.split(',');
+
+  var pre = m.pre;
+  var body = m.body;
+  var post = m.post;
+  var p = pre.split(',');
+
+  p[p.length-1] += '{' + body + '}';
+  var postParts = parseCommaParts(post);
+  if (post.length) {
+    p[p.length-1] += postParts.shift();
+    p.push.apply(p, postParts);
+  }
+
+  parts.push.apply(parts, p);
+
+  return parts;
+}
+
+function expandTop(str) {
+  if (!str)
+    return [];
+
+  // I don't know why Bash 4.3 does this, but it does.
+  // Anything starting with {} will have the first two bytes preserved
+  // but *only* at the top level, so {},a}b will not expand to anything,
+  // but a{},b}c will be expanded to [a}c,abc].
+  // One could argue that this is a bug in Bash, but since the goal of
+  // this module is to match Bash's rules, we escape a leading {}
+  if (str.substr(0, 2) === '{}') {
+    str = '\\{\\}' + str.substr(2);
+  }
+
+  return expand(escapeBraces(str), true).map(unescapeBraces);
+}
+
+function identity(e) {
+  return e;
+}
+
+function embrace(str) {
+  return '{' + str + '}';
+}
+function isPadded(el) {
+  return /^-?0\d/.test(el);
+}
+
+function lte(i, y) {
+  return i <= y;
+}
+function gte(i, y) {
+  return i >= y;
+}
+
+function expand(str, isTop) {
+  var expansions = [];
+
+  var m = balanced('{', '}', str);
+  if (!m || /\$$/.test(m.pre)) return [str];
+
+  var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
+  var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
+  var isSequence = isNumericSequence || isAlphaSequence;
+  var isOptions = m.body.indexOf(',') >= 0;
+  if (!isSequence && !isOptions) {
+    // {a},b}
+    if (m.post.match(/,.*\}/)) {
+      str = m.pre + '{' + m.body + escClose + m.post;
+      return expand(str);
+    }
+    return [str];
+  }
+
+  var n;
+  if (isSequence) {
+    n = m.body.split(/\.\./);
+  } else {
+    n = parseCommaParts(m.body);
+    if (n.length === 1) {
+      // x{{a,b}}y ==> x{a}y x{b}y
+      n = expand(n[0], false).map(embrace);
+      if (n.length === 1) {
+        var post = m.post.length
+          ? expand(m.post, false)
+          : [''];
+        return post.map(function(p) {
+          return m.pre + n[0] + p;
+        });
+      }
+    }
+  }
+
+  // at this point, n is the parts, and we know it's not a comma set
+  // with a single entry.
+
+  // no need to expand pre, since it is guaranteed to be free of brace-sets
+  var pre = m.pre;
+  var post = m.post.length
+    ? expand(m.post, false)
+    : [''];
+
+  var N;
+
+  if (isSequence) {
+    var x = numeric(n[0]);
+    var y = numeric(n[1]);
+    var width = Math.max(n[0].length, n[1].length)
+    var incr = n.length == 3
+      ? Math.abs(numeric(n[2]))
+      : 1;
+    var test = lte;
+    var reverse = y < x;
+    if (reverse) {
+      incr *= -1;
+      test = gte;
+    }
+    var pad = n.some(isPadded);
+
+    N = [];
+
+    for (var i = x; test(i, y); i += incr) {
+      var c;
+      if (isAlphaSequence) {
+        c = String.fromCharCode(i);
+        if (c === '\\')
+          c = '';
+      } else {
+        c = String(i);
+        if (pad) {
+          var need = width - c.length;
+          if (need > 0) {
+            var z = new Array(need + 1).join('0');
+            if (i < 0)
+              c = '-' + z + c.slice(1);
+            else
+              c = z + c;
+          }
+        }
+      }
+      N.push(c);
+    }
+  } else {
+    N = concatMap(n, function(el) { return expand(el, false) });
+  }
+
+  for (var j = 0; j < N.length; j++) {
+    for (var k = 0; k < post.length; k++) {
+      var expansion = pre + N[j] + post[k];
+      if (!isTop || isSequence || expansion)
+        expansions.push(expansion);
+    }
+  }
+
+  return expansions;
+}
+
+
+
+/***/ }),
+
+/***/ 7485:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -6104,216 +6314,6 @@ exports.useNativeSync = !hasNative || platform_js_1.default === 'win32'
 
 /***/ }),
 
-/***/ 8209:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-var balanced = __nccwpck_require__(9417);
-
-module.exports = expandTop;
-
-var escSlash = '\0SLASH'+Math.random()+'\0';
-var escOpen = '\0OPEN'+Math.random()+'\0';
-var escClose = '\0CLOSE'+Math.random()+'\0';
-var escComma = '\0COMMA'+Math.random()+'\0';
-var escPeriod = '\0PERIOD'+Math.random()+'\0';
-
-function numeric(str) {
-  return parseInt(str, 10) == str
-    ? parseInt(str, 10)
-    : str.charCodeAt(0);
-}
-
-function escapeBraces(str) {
-  return str.split('\\\\').join(escSlash)
-            .split('\\{').join(escOpen)
-            .split('\\}').join(escClose)
-            .split('\\,').join(escComma)
-            .split('\\.').join(escPeriod);
-}
-
-function unescapeBraces(str) {
-  return str.split(escSlash).join('\\')
-            .split(escOpen).join('{')
-            .split(escClose).join('}')
-            .split(escComma).join(',')
-            .split(escPeriod).join('.');
-}
-
-
-// Basically just str.split(","), but handling cases
-// where we have nested braced sections, which should be
-// treated as individual members, like {a,{b,c},d}
-function parseCommaParts(str) {
-  if (!str)
-    return [''];
-
-  var parts = [];
-  var m = balanced('{', '}', str);
-
-  if (!m)
-    return str.split(',');
-
-  var pre = m.pre;
-  var body = m.body;
-  var post = m.post;
-  var p = pre.split(',');
-
-  p[p.length-1] += '{' + body + '}';
-  var postParts = parseCommaParts(post);
-  if (post.length) {
-    p[p.length-1] += postParts.shift();
-    p.push.apply(p, postParts);
-  }
-
-  parts.push.apply(parts, p);
-
-  return parts;
-}
-
-function expandTop(str) {
-  if (!str)
-    return [];
-
-  // I don't know why Bash 4.3 does this, but it does.
-  // Anything starting with {} will have the first two bytes preserved
-  // but *only* at the top level, so {},a}b will not expand to anything,
-  // but a{},b}c will be expanded to [a}c,abc].
-  // One could argue that this is a bug in Bash, but since the goal of
-  // this module is to match Bash's rules, we escape a leading {}
-  if (str.substr(0, 2) === '{}') {
-    str = '\\{\\}' + str.substr(2);
-  }
-
-  return expand(escapeBraces(str), true).map(unescapeBraces);
-}
-
-function embrace(str) {
-  return '{' + str + '}';
-}
-function isPadded(el) {
-  return /^-?0\d/.test(el);
-}
-
-function lte(i, y) {
-  return i <= y;
-}
-function gte(i, y) {
-  return i >= y;
-}
-
-function expand(str, isTop) {
-  var expansions = [];
-
-  var m = balanced('{', '}', str);
-  if (!m) return [str];
-
-  // no need to expand pre, since it is guaranteed to be free of brace-sets
-  var pre = m.pre;
-  var post = m.post.length
-    ? expand(m.post, false)
-    : [''];
-
-  if (/\$$/.test(m.pre)) {    
-    for (var k = 0; k < post.length; k++) {
-      var expansion = pre+ '{' + m.body + '}' + post[k];
-      expansions.push(expansion);
-    }
-  } else {
-    var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
-    var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
-    var isSequence = isNumericSequence || isAlphaSequence;
-    var isOptions = m.body.indexOf(',') >= 0;
-    if (!isSequence && !isOptions) {
-      // {a},b}
-      if (m.post.match(/,.*\}/)) {
-        str = m.pre + '{' + m.body + escClose + m.post;
-        return expand(str);
-      }
-      return [str];
-    }
-
-    var n;
-    if (isSequence) {
-      n = m.body.split(/\.\./);
-    } else {
-      n = parseCommaParts(m.body);
-      if (n.length === 1) {
-        // x{{a,b}}y ==> x{a}y x{b}y
-        n = expand(n[0], false).map(embrace);
-        if (n.length === 1) {
-          return post.map(function(p) {
-            return m.pre + n[0] + p;
-          });
-        }
-      }
-    }
-
-    // at this point, n is the parts, and we know it's not a comma set
-    // with a single entry.
-    var N;
-
-    if (isSequence) {
-      var x = numeric(n[0]);
-      var y = numeric(n[1]);
-      var width = Math.max(n[0].length, n[1].length)
-      var incr = n.length == 3
-        ? Math.abs(numeric(n[2]))
-        : 1;
-      var test = lte;
-      var reverse = y < x;
-      if (reverse) {
-        incr *= -1;
-        test = gte;
-      }
-      var pad = n.some(isPadded);
-
-      N = [];
-
-      for (var i = x; test(i, y); i += incr) {
-        var c;
-        if (isAlphaSequence) {
-          c = String.fromCharCode(i);
-          if (c === '\\')
-            c = '';
-        } else {
-          c = String(i);
-          if (pad) {
-            var need = width - c.length;
-            if (need > 0) {
-              var z = new Array(need + 1).join('0');
-              if (i < 0)
-                c = '-' + z + c.slice(1);
-              else
-                c = z + c;
-            }
-          }
-        }
-        N.push(c);
-      }
-    } else {
-      N = [];
-
-      for (var j = 0; j < n.length; j++) {
-        N.push.apply(N, expand(n[j], false));
-      }
-    }
-
-    for (var j = 0; j < N.length; j++) {
-      for (var k = 0; k < post.length; k++) {
-        var expansion = pre + N[j] + post[k];
-        if (!isTop || isSequence || expansion)
-          expansions.push(expansion);
-      }
-    }
-  }
-
-  return expansions;
-}
-
-
-
-/***/ }),
-
 /***/ 7686:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -7329,7 +7329,7 @@ exports.GlobStream = exports.GlobWalker = exports.GlobUtil = void 0;
  *
  * @module
  */
-const minipass_1 = __nccwpck_require__(1077);
+const minipass_1 = __nccwpck_require__(5223);
 const ignore_js_1 = __nccwpck_require__(5907);
 const processor_js_1 = __nccwpck_require__(2487);
 const makeIgnore = (ignore, opts) => typeof ignore === 'string'
@@ -7678,6 +7678,716 @@ class GlobStream extends GlobUtil {
 }
 exports.GlobStream = GlobStream;
 //# sourceMappingURL=walker.js.map
+
+/***/ }),
+
+/***/ 5223:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+const proc =
+  typeof process === 'object' && process
+    ? process
+    : {
+        stdout: null,
+        stderr: null,
+      }
+const EE = __nccwpck_require__(2361)
+const Stream = __nccwpck_require__(2781)
+const stringdecoder = __nccwpck_require__(1576)
+const SD = stringdecoder.StringDecoder
+
+const EOF = Symbol('EOF')
+const MAYBE_EMIT_END = Symbol('maybeEmitEnd')
+const EMITTED_END = Symbol('emittedEnd')
+const EMITTING_END = Symbol('emittingEnd')
+const EMITTED_ERROR = Symbol('emittedError')
+const CLOSED = Symbol('closed')
+const READ = Symbol('read')
+const FLUSH = Symbol('flush')
+const FLUSHCHUNK = Symbol('flushChunk')
+const ENCODING = Symbol('encoding')
+const DECODER = Symbol('decoder')
+const FLOWING = Symbol('flowing')
+const PAUSED = Symbol('paused')
+const RESUME = Symbol('resume')
+const BUFFER = Symbol('buffer')
+const PIPES = Symbol('pipes')
+const BUFFERLENGTH = Symbol('bufferLength')
+const BUFFERPUSH = Symbol('bufferPush')
+const BUFFERSHIFT = Symbol('bufferShift')
+const OBJECTMODE = Symbol('objectMode')
+// internal event when stream is destroyed
+const DESTROYED = Symbol('destroyed')
+// internal event when stream has an error
+const ERROR = Symbol('error')
+const EMITDATA = Symbol('emitData')
+const EMITEND = Symbol('emitEnd')
+const EMITEND2 = Symbol('emitEnd2')
+const ASYNC = Symbol('async')
+const ABORT = Symbol('abort')
+const ABORTED = Symbol('aborted')
+const SIGNAL = Symbol('signal')
+
+const defer = fn => Promise.resolve().then(fn)
+
+// TODO remove when Node v8 support drops
+const doIter = global._MP_NO_ITERATOR_SYMBOLS_ !== '1'
+const ASYNCITERATOR =
+  (doIter && Symbol.asyncIterator) || Symbol('asyncIterator not implemented')
+const ITERATOR =
+  (doIter && Symbol.iterator) || Symbol('iterator not implemented')
+
+// events that mean 'the stream is over'
+// these are treated specially, and re-emitted
+// if they are listened for after emitting.
+const isEndish = ev => ev === 'end' || ev === 'finish' || ev === 'prefinish'
+
+const isArrayBuffer = b =>
+  b instanceof ArrayBuffer ||
+  (typeof b === 'object' &&
+    b.constructor &&
+    b.constructor.name === 'ArrayBuffer' &&
+    b.byteLength >= 0)
+
+const isArrayBufferView = b => !Buffer.isBuffer(b) && ArrayBuffer.isView(b)
+
+class Pipe {
+  constructor(src, dest, opts) {
+    this.src = src
+    this.dest = dest
+    this.opts = opts
+    this.ondrain = () => src[RESUME]()
+    dest.on('drain', this.ondrain)
+  }
+  unpipe() {
+    this.dest.removeListener('drain', this.ondrain)
+  }
+  // istanbul ignore next - only here for the prototype
+  proxyErrors() {}
+  end() {
+    this.unpipe()
+    if (this.opts.end) this.dest.end()
+  }
+}
+
+class PipeProxyErrors extends Pipe {
+  unpipe() {
+    this.src.removeListener('error', this.proxyErrors)
+    super.unpipe()
+  }
+  constructor(src, dest, opts) {
+    super(src, dest, opts)
+    this.proxyErrors = er => dest.emit('error', er)
+    src.on('error', this.proxyErrors)
+  }
+}
+
+class Minipass extends Stream {
+  constructor(options) {
+    super()
+    this[FLOWING] = false
+    // whether we're explicitly paused
+    this[PAUSED] = false
+    this[PIPES] = []
+    this[BUFFER] = []
+    this[OBJECTMODE] = (options && options.objectMode) || false
+    if (this[OBJECTMODE]) this[ENCODING] = null
+    else this[ENCODING] = (options && options.encoding) || null
+    if (this[ENCODING] === 'buffer') this[ENCODING] = null
+    this[ASYNC] = (options && !!options.async) || false
+    this[DECODER] = this[ENCODING] ? new SD(this[ENCODING]) : null
+    this[EOF] = false
+    this[EMITTED_END] = false
+    this[EMITTING_END] = false
+    this[CLOSED] = false
+    this[EMITTED_ERROR] = null
+    this.writable = true
+    this.readable = true
+    this[BUFFERLENGTH] = 0
+    this[DESTROYED] = false
+    if (options && options.debugExposeBuffer === true) {
+      Object.defineProperty(this, 'buffer', { get: () => this[BUFFER] })
+    }
+    if (options && options.debugExposePipes === true) {
+      Object.defineProperty(this, 'pipes', { get: () => this[PIPES] })
+    }
+    this[SIGNAL] = options && options.signal
+    this[ABORTED] = false
+    if (this[SIGNAL]) {
+      this[SIGNAL].addEventListener('abort', () => this[ABORT]())
+      if (this[SIGNAL].aborted) {
+        this[ABORT]()
+      }
+    }
+  }
+
+  get bufferLength() {
+    return this[BUFFERLENGTH]
+  }
+
+  get encoding() {
+    return this[ENCODING]
+  }
+  set encoding(enc) {
+    if (this[OBJECTMODE]) throw new Error('cannot set encoding in objectMode')
+
+    if (
+      this[ENCODING] &&
+      enc !== this[ENCODING] &&
+      ((this[DECODER] && this[DECODER].lastNeed) || this[BUFFERLENGTH])
+    )
+      throw new Error('cannot change encoding')
+
+    if (this[ENCODING] !== enc) {
+      this[DECODER] = enc ? new SD(enc) : null
+      if (this[BUFFER].length)
+        this[BUFFER] = this[BUFFER].map(chunk => this[DECODER].write(chunk))
+    }
+
+    this[ENCODING] = enc
+  }
+
+  setEncoding(enc) {
+    this.encoding = enc
+  }
+
+  get objectMode() {
+    return this[OBJECTMODE]
+  }
+  set objectMode(om) {
+    this[OBJECTMODE] = this[OBJECTMODE] || !!om
+  }
+
+  get ['async']() {
+    return this[ASYNC]
+  }
+  set ['async'](a) {
+    this[ASYNC] = this[ASYNC] || !!a
+  }
+
+  // drop everything and get out of the flow completely
+  [ABORT]() {
+    this[ABORTED] = true
+    this.emit('abort', this[SIGNAL].reason)
+    this.destroy(this[SIGNAL].reason)
+  }
+
+  get aborted() {
+    return this[ABORTED]
+  }
+  set aborted(_) {}
+
+  write(chunk, encoding, cb) {
+    if (this[ABORTED]) return false
+    if (this[EOF]) throw new Error('write after end')
+
+    if (this[DESTROYED]) {
+      this.emit(
+        'error',
+        Object.assign(
+          new Error('Cannot call write after a stream was destroyed'),
+          { code: 'ERR_STREAM_DESTROYED' }
+        )
+      )
+      return true
+    }
+
+    if (typeof encoding === 'function') (cb = encoding), (encoding = 'utf8')
+
+    if (!encoding) encoding = 'utf8'
+
+    const fn = this[ASYNC] ? defer : f => f()
+
+    // convert array buffers and typed array views into buffers
+    // at some point in the future, we may want to do the opposite!
+    // leave strings and buffers as-is
+    // anything else switches us into object mode
+    if (!this[OBJECTMODE] && !Buffer.isBuffer(chunk)) {
+      if (isArrayBufferView(chunk))
+        chunk = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+      else if (isArrayBuffer(chunk)) chunk = Buffer.from(chunk)
+      else if (typeof chunk !== 'string')
+        // use the setter so we throw if we have encoding set
+        this.objectMode = true
+    }
+
+    // handle object mode up front, since it's simpler
+    // this yields better performance, fewer checks later.
+    if (this[OBJECTMODE]) {
+      /* istanbul ignore if - maybe impossible? */
+      if (this.flowing && this[BUFFERLENGTH] !== 0) this[FLUSH](true)
+
+      if (this.flowing) this.emit('data', chunk)
+      else this[BUFFERPUSH](chunk)
+
+      if (this[BUFFERLENGTH] !== 0) this.emit('readable')
+
+      if (cb) fn(cb)
+
+      return this.flowing
+    }
+
+    // at this point the chunk is a buffer or string
+    // don't buffer it up or send it to the decoder
+    if (!chunk.length) {
+      if (this[BUFFERLENGTH] !== 0) this.emit('readable')
+      if (cb) fn(cb)
+      return this.flowing
+    }
+
+    // fast-path writing strings of same encoding to a stream with
+    // an empty buffer, skipping the buffer/decoder dance
+    if (
+      typeof chunk === 'string' &&
+      // unless it is a string already ready for us to use
+      !(encoding === this[ENCODING] && !this[DECODER].lastNeed)
+    ) {
+      chunk = Buffer.from(chunk, encoding)
+    }
+
+    if (Buffer.isBuffer(chunk) && this[ENCODING])
+      chunk = this[DECODER].write(chunk)
+
+    // Note: flushing CAN potentially switch us into not-flowing mode
+    if (this.flowing && this[BUFFERLENGTH] !== 0) this[FLUSH](true)
+
+    if (this.flowing) this.emit('data', chunk)
+    else this[BUFFERPUSH](chunk)
+
+    if (this[BUFFERLENGTH] !== 0) this.emit('readable')
+
+    if (cb) fn(cb)
+
+    return this.flowing
+  }
+
+  read(n) {
+    if (this[DESTROYED]) return null
+
+    if (this[BUFFERLENGTH] === 0 || n === 0 || n > this[BUFFERLENGTH]) {
+      this[MAYBE_EMIT_END]()
+      return null
+    }
+
+    if (this[OBJECTMODE]) n = null
+
+    if (this[BUFFER].length > 1 && !this[OBJECTMODE]) {
+      if (this.encoding) this[BUFFER] = [this[BUFFER].join('')]
+      else this[BUFFER] = [Buffer.concat(this[BUFFER], this[BUFFERLENGTH])]
+    }
+
+    const ret = this[READ](n || null, this[BUFFER][0])
+    this[MAYBE_EMIT_END]()
+    return ret
+  }
+
+  [READ](n, chunk) {
+    if (n === chunk.length || n === null) this[BUFFERSHIFT]()
+    else {
+      this[BUFFER][0] = chunk.slice(n)
+      chunk = chunk.slice(0, n)
+      this[BUFFERLENGTH] -= n
+    }
+
+    this.emit('data', chunk)
+
+    if (!this[BUFFER].length && !this[EOF]) this.emit('drain')
+
+    return chunk
+  }
+
+  end(chunk, encoding, cb) {
+    if (typeof chunk === 'function') (cb = chunk), (chunk = null)
+    if (typeof encoding === 'function') (cb = encoding), (encoding = 'utf8')
+    if (chunk) this.write(chunk, encoding)
+    if (cb) this.once('end', cb)
+    this[EOF] = true
+    this.writable = false
+
+    // if we haven't written anything, then go ahead and emit,
+    // even if we're not reading.
+    // we'll re-emit if a new 'end' listener is added anyway.
+    // This makes MP more suitable to write-only use cases.
+    if (this.flowing || !this[PAUSED]) this[MAYBE_EMIT_END]()
+    return this
+  }
+
+  // don't let the internal resume be overwritten
+  [RESUME]() {
+    if (this[DESTROYED]) return
+
+    this[PAUSED] = false
+    this[FLOWING] = true
+    this.emit('resume')
+    if (this[BUFFER].length) this[FLUSH]()
+    else if (this[EOF]) this[MAYBE_EMIT_END]()
+    else this.emit('drain')
+  }
+
+  resume() {
+    return this[RESUME]()
+  }
+
+  pause() {
+    this[FLOWING] = false
+    this[PAUSED] = true
+  }
+
+  get destroyed() {
+    return this[DESTROYED]
+  }
+
+  get flowing() {
+    return this[FLOWING]
+  }
+
+  get paused() {
+    return this[PAUSED]
+  }
+
+  [BUFFERPUSH](chunk) {
+    if (this[OBJECTMODE]) this[BUFFERLENGTH] += 1
+    else this[BUFFERLENGTH] += chunk.length
+    this[BUFFER].push(chunk)
+  }
+
+  [BUFFERSHIFT]() {
+    if (this[OBJECTMODE]) this[BUFFERLENGTH] -= 1
+    else this[BUFFERLENGTH] -= this[BUFFER][0].length
+    return this[BUFFER].shift()
+  }
+
+  [FLUSH](noDrain) {
+    do {} while (this[FLUSHCHUNK](this[BUFFERSHIFT]()) && this[BUFFER].length)
+
+    if (!noDrain && !this[BUFFER].length && !this[EOF]) this.emit('drain')
+  }
+
+  [FLUSHCHUNK](chunk) {
+    this.emit('data', chunk)
+    return this.flowing
+  }
+
+  pipe(dest, opts) {
+    if (this[DESTROYED]) return
+
+    const ended = this[EMITTED_END]
+    opts = opts || {}
+    if (dest === proc.stdout || dest === proc.stderr) opts.end = false
+    else opts.end = opts.end !== false
+    opts.proxyErrors = !!opts.proxyErrors
+
+    // piping an ended stream ends immediately
+    if (ended) {
+      if (opts.end) dest.end()
+    } else {
+      this[PIPES].push(
+        !opts.proxyErrors
+          ? new Pipe(this, dest, opts)
+          : new PipeProxyErrors(this, dest, opts)
+      )
+      if (this[ASYNC]) defer(() => this[RESUME]())
+      else this[RESUME]()
+    }
+
+    return dest
+  }
+
+  unpipe(dest) {
+    const p = this[PIPES].find(p => p.dest === dest)
+    if (p) {
+      this[PIPES].splice(this[PIPES].indexOf(p), 1)
+      p.unpipe()
+    }
+  }
+
+  addListener(ev, fn) {
+    return this.on(ev, fn)
+  }
+
+  on(ev, fn) {
+    const ret = super.on(ev, fn)
+    if (ev === 'data' && !this[PIPES].length && !this.flowing) this[RESUME]()
+    else if (ev === 'readable' && this[BUFFERLENGTH] !== 0)
+      super.emit('readable')
+    else if (isEndish(ev) && this[EMITTED_END]) {
+      super.emit(ev)
+      this.removeAllListeners(ev)
+    } else if (ev === 'error' && this[EMITTED_ERROR]) {
+      if (this[ASYNC]) defer(() => fn.call(this, this[EMITTED_ERROR]))
+      else fn.call(this, this[EMITTED_ERROR])
+    }
+    return ret
+  }
+
+  get emittedEnd() {
+    return this[EMITTED_END]
+  }
+
+  [MAYBE_EMIT_END]() {
+    if (
+      !this[EMITTING_END] &&
+      !this[EMITTED_END] &&
+      !this[DESTROYED] &&
+      this[BUFFER].length === 0 &&
+      this[EOF]
+    ) {
+      this[EMITTING_END] = true
+      this.emit('end')
+      this.emit('prefinish')
+      this.emit('finish')
+      if (this[CLOSED]) this.emit('close')
+      this[EMITTING_END] = false
+    }
+  }
+
+  emit(ev, data, ...extra) {
+    // error and close are only events allowed after calling destroy()
+    if (ev !== 'error' && ev !== 'close' && ev !== DESTROYED && this[DESTROYED])
+      return
+    else if (ev === 'data') {
+      return !this[OBJECTMODE] && !data
+        ? false
+        : this[ASYNC]
+        ? defer(() => this[EMITDATA](data))
+        : this[EMITDATA](data)
+    } else if (ev === 'end') {
+      return this[EMITEND]()
+    } else if (ev === 'close') {
+      this[CLOSED] = true
+      // don't emit close before 'end' and 'finish'
+      if (!this[EMITTED_END] && !this[DESTROYED]) return
+      const ret = super.emit('close')
+      this.removeAllListeners('close')
+      return ret
+    } else if (ev === 'error') {
+      this[EMITTED_ERROR] = data
+      super.emit(ERROR, data)
+      const ret =
+        !this[SIGNAL] || this.listeners('error').length
+          ? super.emit('error', data)
+          : false
+      this[MAYBE_EMIT_END]()
+      return ret
+    } else if (ev === 'resume') {
+      const ret = super.emit('resume')
+      this[MAYBE_EMIT_END]()
+      return ret
+    } else if (ev === 'finish' || ev === 'prefinish') {
+      const ret = super.emit(ev)
+      this.removeAllListeners(ev)
+      return ret
+    }
+
+    // Some other unknown event
+    const ret = super.emit(ev, data, ...extra)
+    this[MAYBE_EMIT_END]()
+    return ret
+  }
+
+  [EMITDATA](data) {
+    for (const p of this[PIPES]) {
+      if (p.dest.write(data) === false) this.pause()
+    }
+    const ret = super.emit('data', data)
+    this[MAYBE_EMIT_END]()
+    return ret
+  }
+
+  [EMITEND]() {
+    if (this[EMITTED_END]) return
+
+    this[EMITTED_END] = true
+    this.readable = false
+    if (this[ASYNC]) defer(() => this[EMITEND2]())
+    else this[EMITEND2]()
+  }
+
+  [EMITEND2]() {
+    if (this[DECODER]) {
+      const data = this[DECODER].end()
+      if (data) {
+        for (const p of this[PIPES]) {
+          p.dest.write(data)
+        }
+        super.emit('data', data)
+      }
+    }
+
+    for (const p of this[PIPES]) {
+      p.end()
+    }
+    const ret = super.emit('end')
+    this.removeAllListeners('end')
+    return ret
+  }
+
+  // const all = await stream.collect()
+  collect() {
+    const buf = []
+    if (!this[OBJECTMODE]) buf.dataLength = 0
+    // set the promise first, in case an error is raised
+    // by triggering the flow here.
+    const p = this.promise()
+    this.on('data', c => {
+      buf.push(c)
+      if (!this[OBJECTMODE]) buf.dataLength += c.length
+    })
+    return p.then(() => buf)
+  }
+
+  // const data = await stream.concat()
+  concat() {
+    return this[OBJECTMODE]
+      ? Promise.reject(new Error('cannot concat in objectMode'))
+      : this.collect().then(buf =>
+          this[OBJECTMODE]
+            ? Promise.reject(new Error('cannot concat in objectMode'))
+            : this[ENCODING]
+            ? buf.join('')
+            : Buffer.concat(buf, buf.dataLength)
+        )
+  }
+
+  // stream.promise().then(() => done, er => emitted error)
+  promise() {
+    return new Promise((resolve, reject) => {
+      this.on(DESTROYED, () => reject(new Error('stream destroyed')))
+      this.on('error', er => reject(er))
+      this.on('end', () => resolve())
+    })
+  }
+
+  // for await (let chunk of stream)
+  [ASYNCITERATOR]() {
+    let stopped = false
+    const stop = () => {
+      this.pause()
+      stopped = true
+      return Promise.resolve({ done: true })
+    }
+    const next = () => {
+      if (stopped) return stop()
+      const res = this.read()
+      if (res !== null) return Promise.resolve({ done: false, value: res })
+
+      if (this[EOF]) return stop()
+
+      let resolve = null
+      let reject = null
+      const onerr = er => {
+        this.removeListener('data', ondata)
+        this.removeListener('end', onend)
+        this.removeListener(DESTROYED, ondestroy)
+        stop()
+        reject(er)
+      }
+      const ondata = value => {
+        this.removeListener('error', onerr)
+        this.removeListener('end', onend)
+        this.removeListener(DESTROYED, ondestroy)
+        this.pause()
+        resolve({ value: value, done: !!this[EOF] })
+      }
+      const onend = () => {
+        this.removeListener('error', onerr)
+        this.removeListener('data', ondata)
+        this.removeListener(DESTROYED, ondestroy)
+        stop()
+        resolve({ done: true })
+      }
+      const ondestroy = () => onerr(new Error('stream destroyed'))
+      return new Promise((res, rej) => {
+        reject = rej
+        resolve = res
+        this.once(DESTROYED, ondestroy)
+        this.once('error', onerr)
+        this.once('end', onend)
+        this.once('data', ondata)
+      })
+    }
+
+    return {
+      next,
+      throw: stop,
+      return: stop,
+      [ASYNCITERATOR]() {
+        return this
+      },
+    }
+  }
+
+  // for (let chunk of stream)
+  [ITERATOR]() {
+    let stopped = false
+    const stop = () => {
+      this.pause()
+      this.removeListener(ERROR, stop)
+      this.removeListener(DESTROYED, stop)
+      this.removeListener('end', stop)
+      stopped = true
+      return { done: true }
+    }
+
+    const next = () => {
+      if (stopped) return stop()
+      const value = this.read()
+      return value === null ? stop() : { value }
+    }
+    this.once('end', stop)
+    this.once(ERROR, stop)
+    this.once(DESTROYED, stop)
+
+    return {
+      next,
+      throw: stop,
+      return: stop,
+      [ITERATOR]() {
+        return this
+      },
+    }
+  }
+
+  destroy(er) {
+    if (this[DESTROYED]) {
+      if (er) this.emit('error', er)
+      else this.emit(DESTROYED)
+      return this
+    }
+
+    this[DESTROYED] = true
+
+    // throw away all buffered data, it's never coming out
+    this[BUFFER].length = 0
+    this[BUFFERLENGTH] = 0
+
+    if (typeof this.close === 'function' && !this[CLOSED]) this.close()
+
+    if (er) this.emit('error', er)
+    // if no error to emit, still reject pending promises
+    else this.emit(DESTROYED)
+
+    return this
+  }
+
+  static isStream(s) {
+    return (
+      !!s &&
+      (s instanceof Minipass ||
+        s instanceof Stream ||
+        (s instanceof EE &&
+          // readable
+          (typeof s.pipe === 'function' ||
+            // writable
+            (typeof s.write === 'function' && typeof s.end === 'function'))))
+    )
+  }
+}
+
+exports.Minipass = Minipass
+
 
 /***/ }),
 
@@ -8766,7 +9476,7 @@ const realpathSync = fs_1.realpathSync.native;
 // TODO: test perf of fs/promises realpath vs realpathCB,
 // since the promises one uses realpath.native
 const promises_1 = __nccwpck_require__(3292);
-const minipass_1 = __nccwpck_require__(1077);
+const minipass_1 = __nccwpck_require__(7485);
 const defaultFS = {
     lstatSync: fs_1.lstatSync,
     readdir: fs_1.readdir,
@@ -12923,7 +13633,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.unescape = exports.escape = exports.AST = exports.Minimatch = exports.match = exports.makeRe = exports.braceExpand = exports.defaults = exports.filter = exports.GLOBSTAR = exports.sep = exports.minimatch = void 0;
-const brace_expansion_1 = __importDefault(__nccwpck_require__(8209));
+const brace_expansion_1 = __importDefault(__nccwpck_require__(3717));
 const assert_valid_pattern_js_1 = __nccwpck_require__(9425);
 const ast_js_1 = __nccwpck_require__(6794);
 const escape_js_1 = __nccwpck_require__(1941);
