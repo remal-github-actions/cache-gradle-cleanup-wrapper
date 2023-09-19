@@ -2,6 +2,6 @@ name: Cleanup Gradle wrapper cache
 description: Cleanup Gradle wrapper cache before caching
 
 runs:
-  using: node16
+  using: node20
   main: 'dist/index.js'
   post: 'dist/index.js'
