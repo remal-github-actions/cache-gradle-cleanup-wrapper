@@ -32,7 +32,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(2186));
 const glob = __importStar(__nccwpck_require__(8090));
-const rimraf = __importStar(__nccwpck_require__(6284));
+const rimraf = __importStar(__nccwpck_require__(9633));
 async function run() {
     try {
         let gradleUserHome = process.env.GRADLE_USER_HOME || '~/.gradle';
@@ -5475,3915 +5475,6 @@ function expand(str, isTop) {
 
 /***/ }),
 
-/***/ 7485:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-const proc =
-  typeof process === 'object' && process
-    ? process
-    : {
-        stdout: null,
-        stderr: null,
-      }
-const EE = __nccwpck_require__(2361)
-const Stream = __nccwpck_require__(2781)
-const stringdecoder = __nccwpck_require__(1576)
-const SD = stringdecoder.StringDecoder
-
-const EOF = Symbol('EOF')
-const MAYBE_EMIT_END = Symbol('maybeEmitEnd')
-const EMITTED_END = Symbol('emittedEnd')
-const EMITTING_END = Symbol('emittingEnd')
-const EMITTED_ERROR = Symbol('emittedError')
-const CLOSED = Symbol('closed')
-const READ = Symbol('read')
-const FLUSH = Symbol('flush')
-const FLUSHCHUNK = Symbol('flushChunk')
-const ENCODING = Symbol('encoding')
-const DECODER = Symbol('decoder')
-const FLOWING = Symbol('flowing')
-const PAUSED = Symbol('paused')
-const RESUME = Symbol('resume')
-const BUFFER = Symbol('buffer')
-const PIPES = Symbol('pipes')
-const BUFFERLENGTH = Symbol('bufferLength')
-const BUFFERPUSH = Symbol('bufferPush')
-const BUFFERSHIFT = Symbol('bufferShift')
-const OBJECTMODE = Symbol('objectMode')
-// internal event when stream is destroyed
-const DESTROYED = Symbol('destroyed')
-// internal event when stream has an error
-const ERROR = Symbol('error')
-const EMITDATA = Symbol('emitData')
-const EMITEND = Symbol('emitEnd')
-const EMITEND2 = Symbol('emitEnd2')
-const ASYNC = Symbol('async')
-const ABORT = Symbol('abort')
-const ABORTED = Symbol('aborted')
-const SIGNAL = Symbol('signal')
-
-const defer = fn => Promise.resolve().then(fn)
-
-// TODO remove when Node v8 support drops
-const doIter = global._MP_NO_ITERATOR_SYMBOLS_ !== '1'
-const ASYNCITERATOR =
-  (doIter && Symbol.asyncIterator) || Symbol('asyncIterator not implemented')
-const ITERATOR =
-  (doIter && Symbol.iterator) || Symbol('iterator not implemented')
-
-// events that mean 'the stream is over'
-// these are treated specially, and re-emitted
-// if they are listened for after emitting.
-const isEndish = ev => ev === 'end' || ev === 'finish' || ev === 'prefinish'
-
-const isArrayBuffer = b =>
-  b instanceof ArrayBuffer ||
-  (typeof b === 'object' &&
-    b.constructor &&
-    b.constructor.name === 'ArrayBuffer' &&
-    b.byteLength >= 0)
-
-const isArrayBufferView = b => !Buffer.isBuffer(b) && ArrayBuffer.isView(b)
-
-class Pipe {
-  constructor(src, dest, opts) {
-    this.src = src
-    this.dest = dest
-    this.opts = opts
-    this.ondrain = () => src[RESUME]()
-    dest.on('drain', this.ondrain)
-  }
-  unpipe() {
-    this.dest.removeListener('drain', this.ondrain)
-  }
-  // istanbul ignore next - only here for the prototype
-  proxyErrors() {}
-  end() {
-    this.unpipe()
-    if (this.opts.end) this.dest.end()
-  }
-}
-
-class PipeProxyErrors extends Pipe {
-  unpipe() {
-    this.src.removeListener('error', this.proxyErrors)
-    super.unpipe()
-  }
-  constructor(src, dest, opts) {
-    super(src, dest, opts)
-    this.proxyErrors = er => dest.emit('error', er)
-    src.on('error', this.proxyErrors)
-  }
-}
-
-class Minipass extends Stream {
-  constructor(options) {
-    super()
-    this[FLOWING] = false
-    // whether we're explicitly paused
-    this[PAUSED] = false
-    this[PIPES] = []
-    this[BUFFER] = []
-    this[OBJECTMODE] = (options && options.objectMode) || false
-    if (this[OBJECTMODE]) this[ENCODING] = null
-    else this[ENCODING] = (options && options.encoding) || null
-    if (this[ENCODING] === 'buffer') this[ENCODING] = null
-    this[ASYNC] = (options && !!options.async) || false
-    this[DECODER] = this[ENCODING] ? new SD(this[ENCODING]) : null
-    this[EOF] = false
-    this[EMITTED_END] = false
-    this[EMITTING_END] = false
-    this[CLOSED] = false
-    this[EMITTED_ERROR] = null
-    this.writable = true
-    this.readable = true
-    this[BUFFERLENGTH] = 0
-    this[DESTROYED] = false
-    if (options && options.debugExposeBuffer === true) {
-      Object.defineProperty(this, 'buffer', { get: () => this[BUFFER] })
-    }
-    if (options && options.debugExposePipes === true) {
-      Object.defineProperty(this, 'pipes', { get: () => this[PIPES] })
-    }
-    this[SIGNAL] = options && options.signal
-    this[ABORTED] = false
-    if (this[SIGNAL]) {
-      this[SIGNAL].addEventListener('abort', () => this[ABORT]())
-      if (this[SIGNAL].aborted) {
-        this[ABORT]()
-      }
-    }
-  }
-
-  get bufferLength() {
-    return this[BUFFERLENGTH]
-  }
-
-  get encoding() {
-    return this[ENCODING]
-  }
-  set encoding(enc) {
-    if (this[OBJECTMODE]) throw new Error('cannot set encoding in objectMode')
-
-    if (
-      this[ENCODING] &&
-      enc !== this[ENCODING] &&
-      ((this[DECODER] && this[DECODER].lastNeed) || this[BUFFERLENGTH])
-    )
-      throw new Error('cannot change encoding')
-
-    if (this[ENCODING] !== enc) {
-      this[DECODER] = enc ? new SD(enc) : null
-      if (this[BUFFER].length)
-        this[BUFFER] = this[BUFFER].map(chunk => this[DECODER].write(chunk))
-    }
-
-    this[ENCODING] = enc
-  }
-
-  setEncoding(enc) {
-    this.encoding = enc
-  }
-
-  get objectMode() {
-    return this[OBJECTMODE]
-  }
-  set objectMode(om) {
-    this[OBJECTMODE] = this[OBJECTMODE] || !!om
-  }
-
-  get ['async']() {
-    return this[ASYNC]
-  }
-  set ['async'](a) {
-    this[ASYNC] = this[ASYNC] || !!a
-  }
-
-  // drop everything and get out of the flow completely
-  [ABORT]() {
-    this[ABORTED] = true
-    this.emit('abort', this[SIGNAL].reason)
-    this.destroy(this[SIGNAL].reason)
-  }
-
-  get aborted() {
-    return this[ABORTED]
-  }
-  set aborted(_) {}
-
-  write(chunk, encoding, cb) {
-    if (this[ABORTED]) return false
-    if (this[EOF]) throw new Error('write after end')
-
-    if (this[DESTROYED]) {
-      this.emit(
-        'error',
-        Object.assign(
-          new Error('Cannot call write after a stream was destroyed'),
-          { code: 'ERR_STREAM_DESTROYED' }
-        )
-      )
-      return true
-    }
-
-    if (typeof encoding === 'function') (cb = encoding), (encoding = 'utf8')
-
-    if (!encoding) encoding = 'utf8'
-
-    const fn = this[ASYNC] ? defer : f => f()
-
-    // convert array buffers and typed array views into buffers
-    // at some point in the future, we may want to do the opposite!
-    // leave strings and buffers as-is
-    // anything else switches us into object mode
-    if (!this[OBJECTMODE] && !Buffer.isBuffer(chunk)) {
-      if (isArrayBufferView(chunk))
-        chunk = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
-      else if (isArrayBuffer(chunk)) chunk = Buffer.from(chunk)
-      else if (typeof chunk !== 'string')
-        // use the setter so we throw if we have encoding set
-        this.objectMode = true
-    }
-
-    // handle object mode up front, since it's simpler
-    // this yields better performance, fewer checks later.
-    if (this[OBJECTMODE]) {
-      /* istanbul ignore if - maybe impossible? */
-      if (this.flowing && this[BUFFERLENGTH] !== 0) this[FLUSH](true)
-
-      if (this.flowing) this.emit('data', chunk)
-      else this[BUFFERPUSH](chunk)
-
-      if (this[BUFFERLENGTH] !== 0) this.emit('readable')
-
-      if (cb) fn(cb)
-
-      return this.flowing
-    }
-
-    // at this point the chunk is a buffer or string
-    // don't buffer it up or send it to the decoder
-    if (!chunk.length) {
-      if (this[BUFFERLENGTH] !== 0) this.emit('readable')
-      if (cb) fn(cb)
-      return this.flowing
-    }
-
-    // fast-path writing strings of same encoding to a stream with
-    // an empty buffer, skipping the buffer/decoder dance
-    if (
-      typeof chunk === 'string' &&
-      // unless it is a string already ready for us to use
-      !(encoding === this[ENCODING] && !this[DECODER].lastNeed)
-    ) {
-      chunk = Buffer.from(chunk, encoding)
-    }
-
-    if (Buffer.isBuffer(chunk) && this[ENCODING])
-      chunk = this[DECODER].write(chunk)
-
-    // Note: flushing CAN potentially switch us into not-flowing mode
-    if (this.flowing && this[BUFFERLENGTH] !== 0) this[FLUSH](true)
-
-    if (this.flowing) this.emit('data', chunk)
-    else this[BUFFERPUSH](chunk)
-
-    if (this[BUFFERLENGTH] !== 0) this.emit('readable')
-
-    if (cb) fn(cb)
-
-    return this.flowing
-  }
-
-  read(n) {
-    if (this[DESTROYED]) return null
-
-    if (this[BUFFERLENGTH] === 0 || n === 0 || n > this[BUFFERLENGTH]) {
-      this[MAYBE_EMIT_END]()
-      return null
-    }
-
-    if (this[OBJECTMODE]) n = null
-
-    if (this[BUFFER].length > 1 && !this[OBJECTMODE]) {
-      if (this.encoding) this[BUFFER] = [this[BUFFER].join('')]
-      else this[BUFFER] = [Buffer.concat(this[BUFFER], this[BUFFERLENGTH])]
-    }
-
-    const ret = this[READ](n || null, this[BUFFER][0])
-    this[MAYBE_EMIT_END]()
-    return ret
-  }
-
-  [READ](n, chunk) {
-    if (n === chunk.length || n === null) this[BUFFERSHIFT]()
-    else {
-      this[BUFFER][0] = chunk.slice(n)
-      chunk = chunk.slice(0, n)
-      this[BUFFERLENGTH] -= n
-    }
-
-    this.emit('data', chunk)
-
-    if (!this[BUFFER].length && !this[EOF]) this.emit('drain')
-
-    return chunk
-  }
-
-  end(chunk, encoding, cb) {
-    if (typeof chunk === 'function') (cb = chunk), (chunk = null)
-    if (typeof encoding === 'function') (cb = encoding), (encoding = 'utf8')
-    if (chunk) this.write(chunk, encoding)
-    if (cb) this.once('end', cb)
-    this[EOF] = true
-    this.writable = false
-
-    // if we haven't written anything, then go ahead and emit,
-    // even if we're not reading.
-    // we'll re-emit if a new 'end' listener is added anyway.
-    // This makes MP more suitable to write-only use cases.
-    if (this.flowing || !this[PAUSED]) this[MAYBE_EMIT_END]()
-    return this
-  }
-
-  // don't let the internal resume be overwritten
-  [RESUME]() {
-    if (this[DESTROYED]) return
-
-    this[PAUSED] = false
-    this[FLOWING] = true
-    this.emit('resume')
-    if (this[BUFFER].length) this[FLUSH]()
-    else if (this[EOF]) this[MAYBE_EMIT_END]()
-    else this.emit('drain')
-  }
-
-  resume() {
-    return this[RESUME]()
-  }
-
-  pause() {
-    this[FLOWING] = false
-    this[PAUSED] = true
-  }
-
-  get destroyed() {
-    return this[DESTROYED]
-  }
-
-  get flowing() {
-    return this[FLOWING]
-  }
-
-  get paused() {
-    return this[PAUSED]
-  }
-
-  [BUFFERPUSH](chunk) {
-    if (this[OBJECTMODE]) this[BUFFERLENGTH] += 1
-    else this[BUFFERLENGTH] += chunk.length
-    this[BUFFER].push(chunk)
-  }
-
-  [BUFFERSHIFT]() {
-    if (this[OBJECTMODE]) this[BUFFERLENGTH] -= 1
-    else this[BUFFERLENGTH] -= this[BUFFER][0].length
-    return this[BUFFER].shift()
-  }
-
-  [FLUSH](noDrain) {
-    do {} while (this[FLUSHCHUNK](this[BUFFERSHIFT]()) && this[BUFFER].length)
-
-    if (!noDrain && !this[BUFFER].length && !this[EOF]) this.emit('drain')
-  }
-
-  [FLUSHCHUNK](chunk) {
-    this.emit('data', chunk)
-    return this.flowing
-  }
-
-  pipe(dest, opts) {
-    if (this[DESTROYED]) return
-
-    const ended = this[EMITTED_END]
-    opts = opts || {}
-    if (dest === proc.stdout || dest === proc.stderr) opts.end = false
-    else opts.end = opts.end !== false
-    opts.proxyErrors = !!opts.proxyErrors
-
-    // piping an ended stream ends immediately
-    if (ended) {
-      if (opts.end) dest.end()
-    } else {
-      this[PIPES].push(
-        !opts.proxyErrors
-          ? new Pipe(this, dest, opts)
-          : new PipeProxyErrors(this, dest, opts)
-      )
-      if (this[ASYNC]) defer(() => this[RESUME]())
-      else this[RESUME]()
-    }
-
-    return dest
-  }
-
-  unpipe(dest) {
-    const p = this[PIPES].find(p => p.dest === dest)
-    if (p) {
-      this[PIPES].splice(this[PIPES].indexOf(p), 1)
-      p.unpipe()
-    }
-  }
-
-  addListener(ev, fn) {
-    return this.on(ev, fn)
-  }
-
-  on(ev, fn) {
-    const ret = super.on(ev, fn)
-    if (ev === 'data' && !this[PIPES].length && !this.flowing) this[RESUME]()
-    else if (ev === 'readable' && this[BUFFERLENGTH] !== 0)
-      super.emit('readable')
-    else if (isEndish(ev) && this[EMITTED_END]) {
-      super.emit(ev)
-      this.removeAllListeners(ev)
-    } else if (ev === 'error' && this[EMITTED_ERROR]) {
-      if (this[ASYNC]) defer(() => fn.call(this, this[EMITTED_ERROR]))
-      else fn.call(this, this[EMITTED_ERROR])
-    }
-    return ret
-  }
-
-  get emittedEnd() {
-    return this[EMITTED_END]
-  }
-
-  [MAYBE_EMIT_END]() {
-    if (
-      !this[EMITTING_END] &&
-      !this[EMITTED_END] &&
-      !this[DESTROYED] &&
-      this[BUFFER].length === 0 &&
-      this[EOF]
-    ) {
-      this[EMITTING_END] = true
-      this.emit('end')
-      this.emit('prefinish')
-      this.emit('finish')
-      if (this[CLOSED]) this.emit('close')
-      this[EMITTING_END] = false
-    }
-  }
-
-  emit(ev, data, ...extra) {
-    // error and close are only events allowed after calling destroy()
-    if (ev !== 'error' && ev !== 'close' && ev !== DESTROYED && this[DESTROYED])
-      return
-    else if (ev === 'data') {
-      return !this[OBJECTMODE] && !data
-        ? false
-        : this[ASYNC]
-        ? defer(() => this[EMITDATA](data))
-        : this[EMITDATA](data)
-    } else if (ev === 'end') {
-      return this[EMITEND]()
-    } else if (ev === 'close') {
-      this[CLOSED] = true
-      // don't emit close before 'end' and 'finish'
-      if (!this[EMITTED_END] && !this[DESTROYED]) return
-      const ret = super.emit('close')
-      this.removeAllListeners('close')
-      return ret
-    } else if (ev === 'error') {
-      this[EMITTED_ERROR] = data
-      super.emit(ERROR, data)
-      const ret =
-        !this[SIGNAL] || this.listeners('error').length
-          ? super.emit('error', data)
-          : false
-      this[MAYBE_EMIT_END]()
-      return ret
-    } else if (ev === 'resume') {
-      const ret = super.emit('resume')
-      this[MAYBE_EMIT_END]()
-      return ret
-    } else if (ev === 'finish' || ev === 'prefinish') {
-      const ret = super.emit(ev)
-      this.removeAllListeners(ev)
-      return ret
-    }
-
-    // Some other unknown event
-    const ret = super.emit(ev, data, ...extra)
-    this[MAYBE_EMIT_END]()
-    return ret
-  }
-
-  [EMITDATA](data) {
-    for (const p of this[PIPES]) {
-      if (p.dest.write(data) === false) this.pause()
-    }
-    const ret = super.emit('data', data)
-    this[MAYBE_EMIT_END]()
-    return ret
-  }
-
-  [EMITEND]() {
-    if (this[EMITTED_END]) return
-
-    this[EMITTED_END] = true
-    this.readable = false
-    if (this[ASYNC]) defer(() => this[EMITEND2]())
-    else this[EMITEND2]()
-  }
-
-  [EMITEND2]() {
-    if (this[DECODER]) {
-      const data = this[DECODER].end()
-      if (data) {
-        for (const p of this[PIPES]) {
-          p.dest.write(data)
-        }
-        super.emit('data', data)
-      }
-    }
-
-    for (const p of this[PIPES]) {
-      p.end()
-    }
-    const ret = super.emit('end')
-    this.removeAllListeners('end')
-    return ret
-  }
-
-  // const all = await stream.collect()
-  collect() {
-    const buf = []
-    if (!this[OBJECTMODE]) buf.dataLength = 0
-    // set the promise first, in case an error is raised
-    // by triggering the flow here.
-    const p = this.promise()
-    this.on('data', c => {
-      buf.push(c)
-      if (!this[OBJECTMODE]) buf.dataLength += c.length
-    })
-    return p.then(() => buf)
-  }
-
-  // const data = await stream.concat()
-  concat() {
-    return this[OBJECTMODE]
-      ? Promise.reject(new Error('cannot concat in objectMode'))
-      : this.collect().then(buf =>
-          this[OBJECTMODE]
-            ? Promise.reject(new Error('cannot concat in objectMode'))
-            : this[ENCODING]
-            ? buf.join('')
-            : Buffer.concat(buf, buf.dataLength)
-        )
-  }
-
-  // stream.promise().then(() => done, er => emitted error)
-  promise() {
-    return new Promise((resolve, reject) => {
-      this.on(DESTROYED, () => reject(new Error('stream destroyed')))
-      this.on('error', er => reject(er))
-      this.on('end', () => resolve())
-    })
-  }
-
-  // for await (let chunk of stream)
-  [ASYNCITERATOR]() {
-    let stopped = false
-    const stop = () => {
-      this.pause()
-      stopped = true
-      return Promise.resolve({ done: true })
-    }
-    const next = () => {
-      if (stopped) return stop()
-      const res = this.read()
-      if (res !== null) return Promise.resolve({ done: false, value: res })
-
-      if (this[EOF]) return stop()
-
-      let resolve = null
-      let reject = null
-      const onerr = er => {
-        this.removeListener('data', ondata)
-        this.removeListener('end', onend)
-        this.removeListener(DESTROYED, ondestroy)
-        stop()
-        reject(er)
-      }
-      const ondata = value => {
-        this.removeListener('error', onerr)
-        this.removeListener('end', onend)
-        this.removeListener(DESTROYED, ondestroy)
-        this.pause()
-        resolve({ value: value, done: !!this[EOF] })
-      }
-      const onend = () => {
-        this.removeListener('error', onerr)
-        this.removeListener('data', ondata)
-        this.removeListener(DESTROYED, ondestroy)
-        stop()
-        resolve({ done: true })
-      }
-      const ondestroy = () => onerr(new Error('stream destroyed'))
-      return new Promise((res, rej) => {
-        reject = rej
-        resolve = res
-        this.once(DESTROYED, ondestroy)
-        this.once('error', onerr)
-        this.once('end', onend)
-        this.once('data', ondata)
-      })
-    }
-
-    return {
-      next,
-      throw: stop,
-      return: stop,
-      [ASYNCITERATOR]() {
-        return this
-      },
-    }
-  }
-
-  // for (let chunk of stream)
-  [ITERATOR]() {
-    let stopped = false
-    const stop = () => {
-      this.pause()
-      this.removeListener(ERROR, stop)
-      this.removeListener(DESTROYED, stop)
-      this.removeListener('end', stop)
-      stopped = true
-      return { done: true }
-    }
-
-    const next = () => {
-      if (stopped) return stop()
-      const value = this.read()
-      return value === null ? stop() : { value }
-    }
-    this.once('end', stop)
-    this.once(ERROR, stop)
-    this.once(DESTROYED, stop)
-
-    return {
-      next,
-      throw: stop,
-      return: stop,
-      [ITERATOR]() {
-        return this
-      },
-    }
-  }
-
-  destroy(er) {
-    if (this[DESTROYED]) {
-      if (er) this.emit('error', er)
-      else this.emit(DESTROYED)
-      return this
-    }
-
-    this[DESTROYED] = true
-
-    // throw away all buffered data, it's never coming out
-    this[BUFFER].length = 0
-    this[BUFFERLENGTH] = 0
-
-    if (typeof this.close === 'function' && !this[CLOSED]) this.close()
-
-    if (er) this.emit('error', er)
-    // if no error to emit, still reject pending promises
-    else this.emit(DESTROYED)
-
-    return this
-  }
-
-  static isStream(s) {
-    return (
-      !!s &&
-      (s instanceof Minipass ||
-        s instanceof Stream ||
-        (s instanceof EE &&
-          // readable
-          (typeof s.pipe === 'function' ||
-            // writable
-            (typeof s.write === 'function' && typeof s.end === 'function'))))
-    )
-  }
-}
-
-exports.Minipass = Minipass
-
-
-/***/ }),
-
-/***/ 1574:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.defaultTmpSync = exports.defaultTmp = void 0;
-// The default temporary folder location for use in the windows algorithm.
-// It's TEMPting to use dirname(path), since that's guaranteed to be on the
-// same device.  However, this means that:
-// rimraf(path).then(() => rimraf(dirname(path)))
-// will often fail with EBUSY, because the parent dir contains
-// marked-for-deletion directory entries (which do not show up in readdir).
-// The approach here is to use os.tmpdir() if it's on the same drive letter,
-// or resolve(path, '\\temp') if it exists, or the root of the drive if not.
-// On Posix (not that you'd be likely to use the windows algorithm there),
-// it uses os.tmpdir() always.
-const os_1 = __nccwpck_require__(2037);
-const path_1 = __nccwpck_require__(1017);
-const fs_js_1 = __nccwpck_require__(1990);
-const platform_js_1 = __importDefault(__nccwpck_require__(8304));
-const { stat } = fs_js_1.promises;
-const isDirSync = (path) => {
-    try {
-        return (0, fs_js_1.statSync)(path).isDirectory();
-    }
-    catch (er) {
-        return false;
-    }
-};
-const isDir = (path) => stat(path).then(st => st.isDirectory(), () => false);
-const win32DefaultTmp = async (path) => {
-    const { root } = (0, path_1.parse)(path);
-    const tmp = (0, os_1.tmpdir)();
-    const { root: tmpRoot } = (0, path_1.parse)(tmp);
-    if (root.toLowerCase() === tmpRoot.toLowerCase()) {
-        return tmp;
-    }
-    const driveTmp = (0, path_1.resolve)(root, '/temp');
-    if (await isDir(driveTmp)) {
-        return driveTmp;
-    }
-    return root;
-};
-const win32DefaultTmpSync = (path) => {
-    const { root } = (0, path_1.parse)(path);
-    const tmp = (0, os_1.tmpdir)();
-    const { root: tmpRoot } = (0, path_1.parse)(tmp);
-    if (root.toLowerCase() === tmpRoot.toLowerCase()) {
-        return tmp;
-    }
-    const driveTmp = (0, path_1.resolve)(root, '/temp');
-    if (isDirSync(driveTmp)) {
-        return driveTmp;
-    }
-    return root;
-};
-const posixDefaultTmp = async () => (0, os_1.tmpdir)();
-const posixDefaultTmpSync = () => (0, os_1.tmpdir)();
-exports.defaultTmp = platform_js_1.default === 'win32' ? win32DefaultTmp : posixDefaultTmp;
-exports.defaultTmpSync = platform_js_1.default === 'win32' ? win32DefaultTmpSync : posixDefaultTmpSync;
-//# sourceMappingURL=default-tmp.js.map
-
-/***/ }),
-
-/***/ 8984:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.fixEPERMSync = exports.fixEPERM = void 0;
-const fs_js_1 = __nccwpck_require__(1990);
-const { chmod } = fs_js_1.promises;
-const fixEPERM = (fn) => async (path) => {
-    try {
-        return await fn(path);
-    }
-    catch (er) {
-        const fer = er;
-        if (fer?.code === 'ENOENT') {
-            return;
-        }
-        if (fer?.code === 'EPERM') {
-            try {
-                await chmod(path, 0o666);
-            }
-            catch (er2) {
-                const fer2 = er2;
-                if (fer2?.code === 'ENOENT') {
-                    return;
-                }
-                throw er;
-            }
-            return await fn(path);
-        }
-        throw er;
-    }
-};
-exports.fixEPERM = fixEPERM;
-const fixEPERMSync = (fn) => (path) => {
-    try {
-        return fn(path);
-    }
-    catch (er) {
-        const fer = er;
-        if (fer?.code === 'ENOENT') {
-            return;
-        }
-        if (fer?.code === 'EPERM') {
-            try {
-                (0, fs_js_1.chmodSync)(path, 0o666);
-            }
-            catch (er2) {
-                const fer2 = er2;
-                if (fer2?.code === 'ENOENT') {
-                    return;
-                }
-                throw er;
-            }
-            return fn(path);
-        }
-        throw er;
-    }
-};
-exports.fixEPERMSync = fixEPERMSync;
-//# sourceMappingURL=fix-eperm.js.map
-
-/***/ }),
-
-/***/ 1990:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-// promisify ourselves, because older nodes don't have fs.promises
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.promises = exports.readdirSync = exports.unlinkSync = exports.lstatSync = exports.statSync = exports.rmSync = exports.rmdirSync = exports.renameSync = exports.mkdirSync = exports.chmodSync = void 0;
-const fs_1 = __importDefault(__nccwpck_require__(7147));
-// sync ones just take the sync version from node
-var fs_2 = __nccwpck_require__(7147);
-Object.defineProperty(exports, "chmodSync", ({ enumerable: true, get: function () { return fs_2.chmodSync; } }));
-Object.defineProperty(exports, "mkdirSync", ({ enumerable: true, get: function () { return fs_2.mkdirSync; } }));
-Object.defineProperty(exports, "renameSync", ({ enumerable: true, get: function () { return fs_2.renameSync; } }));
-Object.defineProperty(exports, "rmdirSync", ({ enumerable: true, get: function () { return fs_2.rmdirSync; } }));
-Object.defineProperty(exports, "rmSync", ({ enumerable: true, get: function () { return fs_2.rmSync; } }));
-Object.defineProperty(exports, "statSync", ({ enumerable: true, get: function () { return fs_2.statSync; } }));
-Object.defineProperty(exports, "lstatSync", ({ enumerable: true, get: function () { return fs_2.lstatSync; } }));
-Object.defineProperty(exports, "unlinkSync", ({ enumerable: true, get: function () { return fs_2.unlinkSync; } }));
-const fs_3 = __nccwpck_require__(7147);
-const readdirSync = (path) => (0, fs_3.readdirSync)(path, { withFileTypes: true });
-exports.readdirSync = readdirSync;
-// unrolled for better inlining, this seems to get better performance
-// than something like:
-// const makeCb = (res, rej) => (er, ...d) => er ? rej(er) : res(...d)
-// which would be a bit cleaner.
-const chmod = (path, mode) => new Promise((res, rej) => fs_1.default.chmod(path, mode, (er, ...d) => (er ? rej(er) : res(...d))));
-const mkdir = (path, options) => new Promise((res, rej) => fs_1.default.mkdir(path, options, (er, made) => (er ? rej(er) : res(made))));
-const readdir = (path) => new Promise((res, rej) => fs_1.default.readdir(path, { withFileTypes: true }, (er, data) => er ? rej(er) : res(data)));
-const rename = (oldPath, newPath) => new Promise((res, rej) => fs_1.default.rename(oldPath, newPath, (er, ...d) => (er ? rej(er) : res(...d))));
-const rm = (path, options) => new Promise((res, rej) => fs_1.default.rm(path, options, (er, ...d) => (er ? rej(er) : res(...d))));
-const rmdir = (path) => new Promise((res, rej) => fs_1.default.rmdir(path, (er, ...d) => (er ? rej(er) : res(...d))));
-const stat = (path) => new Promise((res, rej) => fs_1.default.stat(path, (er, data) => (er ? rej(er) : res(data))));
-const lstat = (path) => new Promise((res, rej) => fs_1.default.lstat(path, (er, data) => (er ? rej(er) : res(data))));
-const unlink = (path) => new Promise((res, rej) => fs_1.default.unlink(path, (er, ...d) => (er ? rej(er) : res(...d))));
-exports.promises = {
-    chmod,
-    mkdir,
-    readdir,
-    rename,
-    rm,
-    rmdir,
-    stat,
-    lstat,
-    unlink,
-};
-//# sourceMappingURL=fs.js.map
-
-/***/ }),
-
-/***/ 1562:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ignoreENOENTSync = exports.ignoreENOENT = void 0;
-const ignoreENOENT = async (p) => p.catch(er => {
-    if (er.code !== 'ENOENT') {
-        throw er;
-    }
-});
-exports.ignoreENOENT = ignoreENOENT;
-const ignoreENOENTSync = (fn) => {
-    try {
-        return fn();
-    }
-    catch (er) {
-        if (er?.code !== 'ENOENT') {
-            throw er;
-        }
-    }
-};
-exports.ignoreENOENTSync = ignoreENOENTSync;
-//# sourceMappingURL=ignore-enoent.js.map
-
-/***/ }),
-
-/***/ 6284:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rimraf = exports.sync = exports.rimrafSync = exports.moveRemove = exports.moveRemoveSync = exports.posix = exports.posixSync = exports.windows = exports.windowsSync = exports.manual = exports.manualSync = exports.native = exports.nativeSync = exports.assertRimrafOptions = exports.isRimrafOptions = void 0;
-const opt_arg_js_1 = __nccwpck_require__(5565);
-const path_arg_js_1 = __importDefault(__nccwpck_require__(7050));
-const glob_1 = __nccwpck_require__(169);
-const typeOrUndef = (val, t) => typeof val === 'undefined' || typeof val === t;
-const isRimrafOptions = (o) => !!o &&
-    typeof o === 'object' &&
-    typeOrUndef(o.preserveRoot, 'boolean') &&
-    typeOrUndef(o.tmp, 'string') &&
-    typeOrUndef(o.maxRetries, 'number') &&
-    typeOrUndef(o.retryDelay, 'number') &&
-    typeOrUndef(o.backoff, 'number') &&
-    typeOrUndef(o.maxBackoff, 'number') &&
-    (typeOrUndef(o.glob, 'boolean') || (o.glob && typeof o.glob === 'object')) &&
-    typeOrUndef(o.filter, 'function');
-exports.isRimrafOptions = isRimrafOptions;
-const assertRimrafOptions = (o) => {
-    if (!(0, exports.isRimrafOptions)(o)) {
-        throw new Error('invalid rimraf options');
-    }
-};
-exports.assertRimrafOptions = assertRimrafOptions;
-const rimraf_manual_js_1 = __nccwpck_require__(5279);
-const rimraf_move_remove_js_1 = __nccwpck_require__(1689);
-const rimraf_native_js_1 = __nccwpck_require__(3689);
-const rimraf_posix_js_1 = __nccwpck_require__(3018);
-const rimraf_windows_js_1 = __nccwpck_require__(2510);
-const use_native_js_1 = __nccwpck_require__(5828);
-const wrap = (fn) => async (path, opt) => {
-    const options = (0, opt_arg_js_1.optArg)(opt);
-    if (options.glob) {
-        path = await (0, glob_1.glob)(path, options.glob);
-    }
-    if (Array.isArray(path)) {
-        return !!(await Promise.all(path.map(p => fn((0, path_arg_js_1.default)(p, options), options)))).reduce((a, b) => a && b, true);
-    }
-    else {
-        return !!(await fn((0, path_arg_js_1.default)(path, options), options));
-    }
-};
-const wrapSync = (fn) => (path, opt) => {
-    const options = (0, opt_arg_js_1.optArgSync)(opt);
-    if (options.glob) {
-        path = (0, glob_1.globSync)(path, options.glob);
-    }
-    if (Array.isArray(path)) {
-        return !!path
-            .map(p => fn((0, path_arg_js_1.default)(p, options), options))
-            .reduce((a, b) => a && b, true);
-    }
-    else {
-        return !!fn((0, path_arg_js_1.default)(path, options), options);
-    }
-};
-exports.nativeSync = wrapSync(rimraf_native_js_1.rimrafNativeSync);
-exports.native = Object.assign(wrap(rimraf_native_js_1.rimrafNative), { sync: exports.nativeSync });
-exports.manualSync = wrapSync(rimraf_manual_js_1.rimrafManualSync);
-exports.manual = Object.assign(wrap(rimraf_manual_js_1.rimrafManual), { sync: exports.manualSync });
-exports.windowsSync = wrapSync(rimraf_windows_js_1.rimrafWindowsSync);
-exports.windows = Object.assign(wrap(rimraf_windows_js_1.rimrafWindows), { sync: exports.windowsSync });
-exports.posixSync = wrapSync(rimraf_posix_js_1.rimrafPosixSync);
-exports.posix = Object.assign(wrap(rimraf_posix_js_1.rimrafPosix), { sync: exports.posixSync });
-exports.moveRemoveSync = wrapSync(rimraf_move_remove_js_1.rimrafMoveRemoveSync);
-exports.moveRemove = Object.assign(wrap(rimraf_move_remove_js_1.rimrafMoveRemove), {
-    sync: exports.moveRemoveSync,
-});
-exports.rimrafSync = wrapSync((path, opt) => (0, use_native_js_1.useNativeSync)(opt) ? (0, rimraf_native_js_1.rimrafNativeSync)(path, opt) : (0, rimraf_manual_js_1.rimrafManualSync)(path, opt));
-exports.sync = exports.rimrafSync;
-const rimraf_ = wrap((path, opt) => (0, use_native_js_1.useNative)(opt) ? (0, rimraf_native_js_1.rimrafNative)(path, opt) : (0, rimraf_manual_js_1.rimrafManual)(path, opt));
-exports.rimraf = Object.assign(rimraf_, {
-    rimraf: rimraf_,
-    sync: exports.rimrafSync,
-    rimrafSync: exports.rimrafSync,
-    manual: exports.manual,
-    manualSync: exports.manualSync,
-    native: exports.native,
-    nativeSync: exports.nativeSync,
-    posix: exports.posix,
-    posixSync: exports.posixSync,
-    windows: exports.windows,
-    windowsSync: exports.windowsSync,
-    moveRemove: exports.moveRemove,
-    moveRemoveSync: exports.moveRemoveSync,
-});
-exports.rimraf.rimraf = exports.rimraf;
-//# sourceMappingURL=index.js.map
-
-/***/ }),
-
-/***/ 5565:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.optArgSync = exports.optArg = void 0;
-const index_js_1 = __nccwpck_require__(6284);
-const optArgT = (opt) => {
-    (0, index_js_1.assertRimrafOptions)(opt);
-    const { glob, ...options } = opt;
-    if (!glob) {
-        return options;
-    }
-    const globOpt = glob === true
-        ? opt.signal
-            ? { signal: opt.signal }
-            : {}
-        : opt.signal
-            ? {
-                signal: opt.signal,
-                ...glob,
-            }
-            : glob;
-    return {
-        ...options,
-        glob: {
-            ...globOpt,
-            // always get absolute paths from glob, to ensure
-            // that we are referencing the correct thing.
-            absolute: true,
-            withFileTypes: false,
-        },
-    };
-};
-const optArg = (opt = {}) => optArgT(opt);
-exports.optArg = optArg;
-const optArgSync = (opt = {}) => optArgT(opt);
-exports.optArgSync = optArgSync;
-//# sourceMappingURL=opt-arg.js.map
-
-/***/ }),
-
-/***/ 7050:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const path_1 = __nccwpck_require__(1017);
-const util_1 = __nccwpck_require__(3837);
-const platform_js_1 = __importDefault(__nccwpck_require__(8304));
-const pathArg = (path, opt = {}) => {
-    const type = typeof path;
-    if (type !== 'string') {
-        const ctor = path && type === 'object' && path.constructor;
-        const received = ctor && ctor.name
-            ? `an instance of ${ctor.name}`
-            : type === 'object'
-                ? (0, util_1.inspect)(path)
-                : `type ${type} ${path}`;
-        const msg = 'The "path" argument must be of type string. ' + `Received ${received}`;
-        throw Object.assign(new TypeError(msg), {
-            path,
-            code: 'ERR_INVALID_ARG_TYPE',
-        });
-    }
-    if (/\0/.test(path)) {
-        // simulate same failure that node raises
-        const msg = 'path must be a string without null bytes';
-        throw Object.assign(new TypeError(msg), {
-            path,
-            code: 'ERR_INVALID_ARG_VALUE',
-        });
-    }
-    path = (0, path_1.resolve)(path);
-    const { root } = (0, path_1.parse)(path);
-    if (path === root && opt.preserveRoot !== false) {
-        const msg = 'refusing to remove root directory without preserveRoot:false';
-        throw Object.assign(new Error(msg), {
-            path,
-            code: 'ERR_PRESERVE_ROOT',
-        });
-    }
-    if (platform_js_1.default === 'win32') {
-        const badWinChars = /[*|"<>?:]/;
-        const { root } = (0, path_1.parse)(path);
-        if (badWinChars.test(path.substring(root.length))) {
-            throw Object.assign(new Error('Illegal characters in path.'), {
-                path,
-                code: 'EINVAL',
-            });
-        }
-    }
-    return path;
-};
-exports["default"] = pathArg;
-//# sourceMappingURL=path-arg.js.map
-
-/***/ }),
-
-/***/ 8304:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports["default"] = process.env.__TESTING_RIMRAF_PLATFORM__ || process.platform;
-//# sourceMappingURL=platform.js.map
-
-/***/ }),
-
-/***/ 9443:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.readdirOrErrorSync = exports.readdirOrError = void 0;
-// returns an array of entries if readdir() works,
-// or the error that readdir() raised if not.
-const fs_js_1 = __nccwpck_require__(1990);
-const { readdir } = fs_js_1.promises;
-const readdirOrError = (path) => readdir(path).catch(er => er);
-exports.readdirOrError = readdirOrError;
-const readdirOrErrorSync = (path) => {
-    try {
-        return (0, fs_js_1.readdirSync)(path);
-    }
-    catch (er) {
-        return er;
-    }
-};
-exports.readdirOrErrorSync = readdirOrErrorSync;
-//# sourceMappingURL=readdir-or-error.js.map
-
-/***/ }),
-
-/***/ 9373:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-// note: max backoff is the maximum that any *single* backoff will do
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.retryBusySync = exports.retryBusy = exports.codes = exports.MAXRETRIES = exports.RATE = exports.MAXBACKOFF = void 0;
-exports.MAXBACKOFF = 200;
-exports.RATE = 1.2;
-exports.MAXRETRIES = 10;
-exports.codes = new Set(['EMFILE', 'ENFILE', 'EBUSY']);
-const retryBusy = (fn) => {
-    const method = async (path, opt, backoff = 1, total = 0) => {
-        const mbo = opt.maxBackoff || exports.MAXBACKOFF;
-        const rate = opt.backoff || exports.RATE;
-        const max = opt.maxRetries || exports.MAXRETRIES;
-        let retries = 0;
-        while (true) {
-            try {
-                return await fn(path);
-            }
-            catch (er) {
-                const fer = er;
-                if (fer?.path === path && fer?.code && exports.codes.has(fer.code)) {
-                    backoff = Math.ceil(backoff * rate);
-                    total = backoff + total;
-                    if (total < mbo) {
-                        return new Promise((res, rej) => {
-                            setTimeout(() => {
-                                method(path, opt, backoff, total).then(res, rej);
-                            }, backoff);
-                        });
-                    }
-                    if (retries < max) {
-                        retries++;
-                        continue;
-                    }
-                }
-                throw er;
-            }
-        }
-    };
-    return method;
-};
-exports.retryBusy = retryBusy;
-// just retries, no async so no backoff
-const retryBusySync = (fn) => {
-    const method = (path, opt) => {
-        const max = opt.maxRetries || exports.MAXRETRIES;
-        let retries = 0;
-        while (true) {
-            try {
-                return fn(path);
-            }
-            catch (er) {
-                const fer = er;
-                if (fer?.path === path &&
-                    fer?.code &&
-                    exports.codes.has(fer.code) &&
-                    retries < max) {
-                    retries++;
-                    continue;
-                }
-                throw er;
-            }
-        }
-    };
-    return method;
-};
-exports.retryBusySync = retryBusySync;
-//# sourceMappingURL=retry-busy.js.map
-
-/***/ }),
-
-/***/ 5279:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rimrafManualSync = exports.rimrafManual = void 0;
-const platform_js_1 = __importDefault(__nccwpck_require__(8304));
-const rimraf_posix_js_1 = __nccwpck_require__(3018);
-const rimraf_windows_js_1 = __nccwpck_require__(2510);
-exports.rimrafManual = platform_js_1.default === 'win32' ? rimraf_windows_js_1.rimrafWindows : rimraf_posix_js_1.rimrafPosix;
-exports.rimrafManualSync = platform_js_1.default === 'win32' ? rimraf_windows_js_1.rimrafWindowsSync : rimraf_posix_js_1.rimrafPosixSync;
-//# sourceMappingURL=rimraf-manual.js.map
-
-/***/ }),
-
-/***/ 1689:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-// https://youtu.be/uhRWMGBjlO8?t=537
-//
-// 1. readdir
-// 2. for each entry
-//   a. if a non-empty directory, recurse
-//   b. if an empty directory, move to random hidden file name in $TEMP
-//   c. unlink/rmdir $TEMP
-//
-// This works around the fact that unlink/rmdir is non-atomic and takes
-// a non-deterministic amount of time to complete.
-//
-// However, it is HELLA SLOW, like 2-10x slower than a naive recursive rm.
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rimrafMoveRemoveSync = exports.rimrafMoveRemove = void 0;
-const path_1 = __nccwpck_require__(1017);
-const default_tmp_js_1 = __nccwpck_require__(1574);
-const ignore_enoent_js_1 = __nccwpck_require__(1562);
-const fs_js_1 = __nccwpck_require__(1990);
-const { lstat, rename, unlink, rmdir, chmod } = fs_js_1.promises;
-const readdir_or_error_js_1 = __nccwpck_require__(9443);
-// crypto.randomBytes is much slower, and Math.random() is enough here
-const uniqueFilename = (path) => `.${(0, path_1.basename)(path)}.${Math.random()}`;
-const unlinkFixEPERM = async (path) => unlink(path).catch((er) => {
-    if (er.code === 'EPERM') {
-        return chmod(path, 0o666).then(() => unlink(path), er2 => {
-            if (er2.code === 'ENOENT') {
-                return;
-            }
-            throw er;
-        });
-    }
-    else if (er.code === 'ENOENT') {
-        return;
-    }
-    throw er;
-});
-const unlinkFixEPERMSync = (path) => {
-    try {
-        (0, fs_js_1.unlinkSync)(path);
-    }
-    catch (er) {
-        if (er?.code === 'EPERM') {
-            try {
-                return (0, fs_js_1.chmodSync)(path, 0o666);
-            }
-            catch (er2) {
-                if (er2?.code === 'ENOENT') {
-                    return;
-                }
-                throw er;
-            }
-        }
-        else if (er?.code === 'ENOENT') {
-            return;
-        }
-        throw er;
-    }
-};
-const rimrafMoveRemove = async (path, opt) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    try {
-        return await rimrafMoveRemoveDir(path, opt, await lstat(path));
-    }
-    catch (er) {
-        if (er?.code === 'ENOENT')
-            return true;
-        throw er;
-    }
-};
-exports.rimrafMoveRemove = rimrafMoveRemove;
-const rimrafMoveRemoveDir = async (path, opt, ent) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    if (!opt.tmp) {
-        return rimrafMoveRemoveDir(path, { ...opt, tmp: await (0, default_tmp_js_1.defaultTmp)(path) }, ent);
-    }
-    if (path === opt.tmp && (0, path_1.parse)(path).root !== path) {
-        throw new Error('cannot delete temp directory used for deletion');
-    }
-    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
-    if (!Array.isArray(entries)) {
-        // this can only happen if lstat/readdir lied, or if the dir was
-        // swapped out with a file at just the right moment.
-        /* c8 ignore start */
-        if (entries) {
-            if (entries.code === 'ENOENT') {
-                return true;
-            }
-            if (entries.code !== 'ENOTDIR') {
-                throw entries;
-            }
-        }
-        /* c8 ignore stop */
-        if (opt.filter && !(await opt.filter(path, ent))) {
-            return false;
-        }
-        await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, unlinkFixEPERM));
-        return true;
-    }
-    const removedAll = (await Promise.all(entries.map(ent => rimrafMoveRemoveDir((0, path_1.resolve)(path, ent.name), opt, ent)))).reduce((a, b) => a && b, true);
-    if (!removedAll) {
-        return false;
-    }
-    // we don't ever ACTUALLY try to unlink /, because that can never work
-    // but when preserveRoot is false, we could be operating on it.
-    // No need to check if preserveRoot is not false.
-    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return false;
-    }
-    if (opt.filter && !(await opt.filter(path, ent))) {
-        return false;
-    }
-    await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, rmdir));
-    return true;
-};
-const tmpUnlink = async (path, tmp, rm) => {
-    const tmpFile = (0, path_1.resolve)(tmp, uniqueFilename(path));
-    await rename(path, tmpFile);
-    return await rm(tmpFile);
-};
-const rimrafMoveRemoveSync = (path, opt) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    try {
-        return rimrafMoveRemoveDirSync(path, opt, (0, fs_js_1.lstatSync)(path));
-    }
-    catch (er) {
-        if (er?.code === 'ENOENT')
-            return true;
-        throw er;
-    }
-};
-exports.rimrafMoveRemoveSync = rimrafMoveRemoveSync;
-const rimrafMoveRemoveDirSync = (path, opt, ent) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    if (!opt.tmp) {
-        return rimrafMoveRemoveDirSync(path, { ...opt, tmp: (0, default_tmp_js_1.defaultTmpSync)(path) }, ent);
-    }
-    const tmp = opt.tmp;
-    if (path === opt.tmp && (0, path_1.parse)(path).root !== path) {
-        throw new Error('cannot delete temp directory used for deletion');
-    }
-    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
-    if (!Array.isArray(entries)) {
-        // this can only happen if lstat/readdir lied, or if the dir was
-        // swapped out with a file at just the right moment.
-        /* c8 ignore start */
-        if (entries) {
-            if (entries.code === 'ENOENT') {
-                return true;
-            }
-            if (entries.code !== 'ENOTDIR') {
-                throw entries;
-            }
-        }
-        /* c8 ignore stop */
-        if (opt.filter && !opt.filter(path, ent)) {
-            return false;
-        }
-        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, unlinkFixEPERMSync));
-        return true;
-    }
-    let removedAll = true;
-    for (const ent of entries) {
-        const p = (0, path_1.resolve)(path, ent.name);
-        removedAll = rimrafMoveRemoveDirSync(p, opt, ent) && removedAll;
-    }
-    if (!removedAll) {
-        return false;
-    }
-    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return false;
-    }
-    if (opt.filter && !opt.filter(path, ent)) {
-        return false;
-    }
-    (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, fs_js_1.rmdirSync));
-    return true;
-};
-const tmpUnlinkSync = (path, tmp, rmSync) => {
-    const tmpFile = (0, path_1.resolve)(tmp, uniqueFilename(path));
-    (0, fs_js_1.renameSync)(path, tmpFile);
-    return rmSync(tmpFile);
-};
-//# sourceMappingURL=rimraf-move-remove.js.map
-
-/***/ }),
-
-/***/ 3689:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rimrafNativeSync = exports.rimrafNative = void 0;
-const fs_js_1 = __nccwpck_require__(1990);
-const { rm } = fs_js_1.promises;
-const rimrafNative = async (path, opt) => {
-    await rm(path, {
-        ...opt,
-        force: true,
-        recursive: true,
-    });
-    return true;
-};
-exports.rimrafNative = rimrafNative;
-const rimrafNativeSync = (path, opt) => {
-    (0, fs_js_1.rmSync)(path, {
-        ...opt,
-        force: true,
-        recursive: true,
-    });
-    return true;
-};
-exports.rimrafNativeSync = rimrafNativeSync;
-//# sourceMappingURL=rimraf-native.js.map
-
-/***/ }),
-
-/***/ 3018:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-// the simple recursive removal, where unlink and rmdir are atomic
-// Note that this approach does NOT work on Windows!
-// We stat first and only unlink if the Dirent isn't a directory,
-// because sunos will let root unlink a directory, and some
-// SUPER weird breakage happens as a result.
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rimrafPosixSync = exports.rimrafPosix = void 0;
-const fs_js_1 = __nccwpck_require__(1990);
-const { lstat, rmdir, unlink } = fs_js_1.promises;
-const path_1 = __nccwpck_require__(1017);
-const readdir_or_error_js_1 = __nccwpck_require__(9443);
-const ignore_enoent_js_1 = __nccwpck_require__(1562);
-const rimrafPosix = async (path, opt) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    try {
-        return await rimrafPosixDir(path, opt, await lstat(path));
-    }
-    catch (er) {
-        if (er?.code === 'ENOENT')
-            return true;
-        throw er;
-    }
-};
-exports.rimrafPosix = rimrafPosix;
-const rimrafPosixSync = (path, opt) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    try {
-        return rimrafPosixDirSync(path, opt, (0, fs_js_1.lstatSync)(path));
-    }
-    catch (er) {
-        if (er?.code === 'ENOENT')
-            return true;
-        throw er;
-    }
-};
-exports.rimrafPosixSync = rimrafPosixSync;
-const rimrafPosixDir = async (path, opt, ent) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
-    if (!Array.isArray(entries)) {
-        // this can only happen if lstat/readdir lied, or if the dir was
-        // swapped out with a file at just the right moment.
-        /* c8 ignore start */
-        if (entries) {
-            if (entries.code === 'ENOENT') {
-                return true;
-            }
-            if (entries.code !== 'ENOTDIR') {
-                throw entries;
-            }
-        }
-        /* c8 ignore stop */
-        if (opt.filter && !(await opt.filter(path, ent))) {
-            return false;
-        }
-        await (0, ignore_enoent_js_1.ignoreENOENT)(unlink(path));
-        return true;
-    }
-    const removedAll = (await Promise.all(entries.map(ent => rimrafPosixDir((0, path_1.resolve)(path, ent.name), opt, ent)))).reduce((a, b) => a && b, true);
-    if (!removedAll) {
-        return false;
-    }
-    // we don't ever ACTUALLY try to unlink /, because that can never work
-    // but when preserveRoot is false, we could be operating on it.
-    // No need to check if preserveRoot is not false.
-    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return false;
-    }
-    if (opt.filter && !(await opt.filter(path, ent))) {
-        return false;
-    }
-    await (0, ignore_enoent_js_1.ignoreENOENT)(rmdir(path));
-    return true;
-};
-const rimrafPosixDirSync = (path, opt, ent) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
-    if (!Array.isArray(entries)) {
-        // this can only happen if lstat/readdir lied, or if the dir was
-        // swapped out with a file at just the right moment.
-        /* c8 ignore start */
-        if (entries) {
-            if (entries.code === 'ENOENT') {
-                return true;
-            }
-            if (entries.code !== 'ENOTDIR') {
-                throw entries;
-            }
-        }
-        /* c8 ignore stop */
-        if (opt.filter && !opt.filter(path, ent)) {
-            return false;
-        }
-        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.unlinkSync)(path));
-        return true;
-    }
-    let removedAll = true;
-    for (const ent of entries) {
-        const p = (0, path_1.resolve)(path, ent.name);
-        removedAll = rimrafPosixDirSync(p, opt, ent) && removedAll;
-    }
-    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-        return false;
-    }
-    if (!removedAll) {
-        return false;
-    }
-    if (opt.filter && !opt.filter(path, ent)) {
-        return false;
-    }
-    (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.rmdirSync)(path));
-    return true;
-};
-//# sourceMappingURL=rimraf-posix.js.map
-
-/***/ }),
-
-/***/ 2510:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-// This is the same as rimrafPosix, with the following changes:
-//
-// 1. EBUSY, ENFILE, EMFILE trigger retries and/or exponential backoff
-// 2. All non-directories are removed first and then all directories are
-//    removed in a second sweep.
-// 3. If we hit ENOTEMPTY in the second sweep, fall back to move-remove on
-//    the that folder.
-//
-// Note: "move then remove" is 2-10 times slower, and just as unreliable.
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.rimrafWindowsSync = exports.rimrafWindows = void 0;
-const path_1 = __nccwpck_require__(1017);
-const fix_eperm_js_1 = __nccwpck_require__(8984);
-const fs_js_1 = __nccwpck_require__(1990);
-const ignore_enoent_js_1 = __nccwpck_require__(1562);
-const readdir_or_error_js_1 = __nccwpck_require__(9443);
-const retry_busy_js_1 = __nccwpck_require__(9373);
-const rimraf_move_remove_js_1 = __nccwpck_require__(1689);
-const { unlink, rmdir, lstat } = fs_js_1.promises;
-const rimrafWindowsFile = (0, retry_busy_js_1.retryBusy)((0, fix_eperm_js_1.fixEPERM)(unlink));
-const rimrafWindowsFileSync = (0, retry_busy_js_1.retryBusySync)((0, fix_eperm_js_1.fixEPERMSync)(fs_js_1.unlinkSync));
-const rimrafWindowsDirRetry = (0, retry_busy_js_1.retryBusy)((0, fix_eperm_js_1.fixEPERM)(rmdir));
-const rimrafWindowsDirRetrySync = (0, retry_busy_js_1.retryBusySync)((0, fix_eperm_js_1.fixEPERMSync)(fs_js_1.rmdirSync));
-const rimrafWindowsDirMoveRemoveFallback = async (path, opt) => {
-    /* c8 ignore start */
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    /* c8 ignore stop */
-    // already filtered, remove from options so we don't call unnecessarily
-    const { filter, ...options } = opt;
-    try {
-        return await rimrafWindowsDirRetry(path, options);
-    }
-    catch (er) {
-        if (er?.code === 'ENOTEMPTY') {
-            return await (0, rimraf_move_remove_js_1.rimrafMoveRemove)(path, options);
-        }
-        throw er;
-    }
-};
-const rimrafWindowsDirMoveRemoveFallbackSync = (path, opt) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    // already filtered, remove from options so we don't call unnecessarily
-    const { filter, ...options } = opt;
-    try {
-        return rimrafWindowsDirRetrySync(path, options);
-    }
-    catch (er) {
-        const fer = er;
-        if (fer?.code === 'ENOTEMPTY') {
-            return (0, rimraf_move_remove_js_1.rimrafMoveRemoveSync)(path, options);
-        }
-        throw er;
-    }
-};
-const START = Symbol('start');
-const CHILD = Symbol('child');
-const FINISH = Symbol('finish');
-const rimrafWindows = async (path, opt) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    try {
-        return await rimrafWindowsDir(path, opt, await lstat(path), START);
-    }
-    catch (er) {
-        if (er?.code === 'ENOENT')
-            return true;
-        throw er;
-    }
-};
-exports.rimrafWindows = rimrafWindows;
-const rimrafWindowsSync = (path, opt) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    try {
-        return rimrafWindowsDirSync(path, opt, (0, fs_js_1.lstatSync)(path), START);
-    }
-    catch (er) {
-        if (er?.code === 'ENOENT')
-            return true;
-        throw er;
-    }
-};
-exports.rimrafWindowsSync = rimrafWindowsSync;
-const rimrafWindowsDir = async (path, opt, ent, state = START) => {
-    if (opt?.signal?.aborted) {
-        throw opt.signal.reason;
-    }
-    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
-    if (!Array.isArray(entries)) {
-        // this can only happen if lstat/readdir lied, or if the dir was
-        // swapped out with a file at just the right moment.
-        /* c8 ignore start */
-        if (entries) {
-            if (entries.code === 'ENOENT') {
-                return true;
-            }
-            if (entries.code !== 'ENOTDIR') {
-                throw entries;
-            }
-        }
-        /* c8 ignore stop */
-        if (opt.filter && !(await opt.filter(path, ent))) {
-            return false;
-        }
-        // is a file
-        await (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsFile(path, opt));
-        return true;
-    }
-    const s = state === START ? CHILD : state;
-    const removedAll = (await Promise.all(entries.map(ent => rimrafWindowsDir((0, path_1.resolve)(path, ent.name), opt, ent, s)))).reduce((a, b) => a && b, true);
-    if (state === START) {
-        return rimrafWindowsDir(path, opt, ent, FINISH);
-    }
-    else if (state === FINISH) {
-        if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-            return false;
-        }
-        if (!removedAll) {
-            return false;
-        }
-        if (opt.filter && !(await opt.filter(path, ent))) {
-            return false;
-        }
-        await (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsDirMoveRemoveFallback(path, opt));
-    }
-    return true;
-};
-const rimrafWindowsDirSync = (path, opt, ent, state = START) => {
-    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
-    if (!Array.isArray(entries)) {
-        // this can only happen if lstat/readdir lied, or if the dir was
-        // swapped out with a file at just the right moment.
-        /* c8 ignore start */
-        if (entries) {
-            if (entries.code === 'ENOENT') {
-                return true;
-            }
-            if (entries.code !== 'ENOTDIR') {
-                throw entries;
-            }
-        }
-        /* c8 ignore stop */
-        if (opt.filter && !opt.filter(path, ent)) {
-            return false;
-        }
-        // is a file
-        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => rimrafWindowsFileSync(path, opt));
-        return true;
-    }
-    let removedAll = true;
-    for (const ent of entries) {
-        const s = state === START ? CHILD : state;
-        const p = (0, path_1.resolve)(path, ent.name);
-        removedAll = rimrafWindowsDirSync(p, opt, ent, s) && removedAll;
-    }
-    if (state === START) {
-        return rimrafWindowsDirSync(path, opt, ent, FINISH);
-    }
-    else if (state === FINISH) {
-        if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
-            return false;
-        }
-        if (!removedAll) {
-            return false;
-        }
-        if (opt.filter && !opt.filter(path, ent)) {
-            return false;
-        }
-        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => {
-            rimrafWindowsDirMoveRemoveFallbackSync(path, opt);
-        });
-    }
-    return true;
-};
-//# sourceMappingURL=rimraf-windows.js.map
-
-/***/ }),
-
-/***/ 5828:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.useNativeSync = exports.useNative = void 0;
-const version = process.env.__TESTING_RIMRAF_NODE_VERSION__ || process.version;
-const versArr = version.replace(/^v/, '').split('.');
-const hasNative = +versArr[0] > 14 || (+versArr[0] === 14 && +versArr[1] >= 14);
-// we do NOT use native by default on Windows, because Node's native
-// rm implementation is less advanced.  Change this code if that changes.
-const platform_js_1 = __importDefault(__nccwpck_require__(8304));
-exports.useNative = !hasNative || platform_js_1.default === 'win32'
-    ? () => false
-    : opt => !opt?.signal && !opt?.filter;
-exports.useNativeSync = !hasNative || platform_js_1.default === 'win32'
-    ? () => false
-    : opt => !opt?.signal && !opt?.filter;
-//# sourceMappingURL=use-native.js.map
-
-/***/ }),
-
-/***/ 7686:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Glob = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
-const path_scurry_1 = __nccwpck_require__(9569);
-const url_1 = __nccwpck_require__(7310);
-const pattern_js_1 = __nccwpck_require__(6066);
-const walker_js_1 = __nccwpck_require__(9849);
-// if no process global, just call it linux.
-// so we default to case-sensitive, / separators
-const defaultPlatform = typeof process === 'object' &&
-    process &&
-    typeof process.platform === 'string'
-    ? process.platform
-    : 'linux';
-/**
- * An object that can perform glob pattern traversals.
- */
-class Glob {
-    absolute;
-    cwd;
-    root;
-    dot;
-    dotRelative;
-    follow;
-    ignore;
-    magicalBraces;
-    mark;
-    matchBase;
-    maxDepth;
-    nobrace;
-    nocase;
-    nodir;
-    noext;
-    noglobstar;
-    pattern;
-    platform;
-    realpath;
-    scurry;
-    stat;
-    signal;
-    windowsPathsNoEscape;
-    withFileTypes;
-    /**
-     * The options provided to the constructor.
-     */
-    opts;
-    /**
-     * An array of parsed immutable {@link Pattern} objects.
-     */
-    patterns;
-    /**
-     * All options are stored as properties on the `Glob` object.
-     *
-     * See {@link GlobOptions} for full options descriptions.
-     *
-     * Note that a previous `Glob` object can be passed as the
-     * `GlobOptions` to another `Glob` instantiation to re-use settings
-     * and caches with a new pattern.
-     *
-     * Traversal functions can be called multiple times to run the walk
-     * again.
-     */
-    constructor(pattern, opts) {
-        this.withFileTypes = !!opts.withFileTypes;
-        this.signal = opts.signal;
-        this.follow = !!opts.follow;
-        this.dot = !!opts.dot;
-        this.dotRelative = !!opts.dotRelative;
-        this.nodir = !!opts.nodir;
-        this.mark = !!opts.mark;
-        if (!opts.cwd) {
-            this.cwd = '';
-        }
-        else if (opts.cwd instanceof URL || opts.cwd.startsWith('file://')) {
-            opts.cwd = (0, url_1.fileURLToPath)(opts.cwd);
-        }
-        this.cwd = opts.cwd || '';
-        this.root = opts.root;
-        this.magicalBraces = !!opts.magicalBraces;
-        this.nobrace = !!opts.nobrace;
-        this.noext = !!opts.noext;
-        this.realpath = !!opts.realpath;
-        this.absolute = opts.absolute;
-        this.noglobstar = !!opts.noglobstar;
-        this.matchBase = !!opts.matchBase;
-        this.maxDepth =
-            typeof opts.maxDepth === 'number' ? opts.maxDepth : Infinity;
-        this.stat = !!opts.stat;
-        this.ignore = opts.ignore;
-        if (this.withFileTypes && this.absolute !== undefined) {
-            throw new Error('cannot set absolute and withFileTypes:true');
-        }
-        if (typeof pattern === 'string') {
-            pattern = [pattern];
-        }
-        this.windowsPathsNoEscape =
-            !!opts.windowsPathsNoEscape ||
-                opts.allowWindowsEscape === false;
-        if (this.windowsPathsNoEscape) {
-            pattern = pattern.map(p => p.replace(/\\/g, '/'));
-        }
-        if (this.matchBase) {
-            if (opts.noglobstar) {
-                throw new TypeError('base matching requires globstar');
-            }
-            pattern = pattern.map(p => (p.includes('/') ? p : `./**/${p}`));
-        }
-        this.pattern = pattern;
-        this.platform = opts.platform || defaultPlatform;
-        this.opts = { ...opts, platform: this.platform };
-        if (opts.scurry) {
-            this.scurry = opts.scurry;
-            if (opts.nocase !== undefined &&
-                opts.nocase !== opts.scurry.nocase) {
-                throw new Error('nocase option contradicts provided scurry option');
-            }
-        }
-        else {
-            const Scurry = opts.platform === 'win32'
-                ? path_scurry_1.PathScurryWin32
-                : opts.platform === 'darwin'
-                    ? path_scurry_1.PathScurryDarwin
-                    : opts.platform
-                        ? path_scurry_1.PathScurryPosix
-                        : path_scurry_1.PathScurry;
-            this.scurry = new Scurry(this.cwd, {
-                nocase: opts.nocase,
-                fs: opts.fs,
-            });
-        }
-        this.nocase = this.scurry.nocase;
-        // If you do nocase:true on a case-sensitive file system, then
-        // we need to use regexps instead of strings for non-magic
-        // path portions, because statting `aBc` won't return results
-        // for the file `AbC` for example.
-        const nocaseMagicOnly = this.platform === 'darwin' || this.platform === 'win32';
-        const mmo = {
-            // default nocase based on platform
-            ...opts,
-            dot: this.dot,
-            matchBase: this.matchBase,
-            nobrace: this.nobrace,
-            nocase: this.nocase,
-            nocaseMagicOnly,
-            nocomment: true,
-            noext: this.noext,
-            nonegate: true,
-            optimizationLevel: 2,
-            platform: this.platform,
-            windowsPathsNoEscape: this.windowsPathsNoEscape,
-            debug: !!this.opts.debug,
-        };
-        const mms = this.pattern.map(p => new minimatch_1.Minimatch(p, mmo));
-        const [matchSet, globParts] = mms.reduce((set, m) => {
-            set[0].push(...m.set);
-            set[1].push(...m.globParts);
-            return set;
-        }, [[], []]);
-        this.patterns = matchSet.map((set, i) => {
-            return new pattern_js_1.Pattern(set, globParts[i], 0, this.platform);
-        });
-    }
-    async walk() {
-        // Walkers always return array of Path objects, so we just have to
-        // coerce them into the right shape.  It will have already called
-        // realpath() if the option was set to do so, so we know that's cached.
-        // start out knowing the cwd, at least
-        return [
-            ...(await new walker_js_1.GlobWalker(this.patterns, this.scurry.cwd, {
-                ...this.opts,
-                maxDepth: this.maxDepth !== Infinity
-                    ? this.maxDepth + this.scurry.cwd.depth()
-                    : Infinity,
-                platform: this.platform,
-                nocase: this.nocase,
-            }).walk()),
-        ];
-    }
-    walkSync() {
-        return [
-            ...new walker_js_1.GlobWalker(this.patterns, this.scurry.cwd, {
-                ...this.opts,
-                maxDepth: this.maxDepth !== Infinity
-                    ? this.maxDepth + this.scurry.cwd.depth()
-                    : Infinity,
-                platform: this.platform,
-                nocase: this.nocase,
-            }).walkSync(),
-        ];
-    }
-    stream() {
-        return new walker_js_1.GlobStream(this.patterns, this.scurry.cwd, {
-            ...this.opts,
-            maxDepth: this.maxDepth !== Infinity
-                ? this.maxDepth + this.scurry.cwd.depth()
-                : Infinity,
-            platform: this.platform,
-            nocase: this.nocase,
-        }).stream();
-    }
-    streamSync() {
-        return new walker_js_1.GlobStream(this.patterns, this.scurry.cwd, {
-            ...this.opts,
-            maxDepth: this.maxDepth !== Infinity
-                ? this.maxDepth + this.scurry.cwd.depth()
-                : Infinity,
-            platform: this.platform,
-            nocase: this.nocase,
-        }).streamSync();
-    }
-    /**
-     * Default sync iteration function. Returns a Generator that
-     * iterates over the results.
-     */
-    iterateSync() {
-        return this.streamSync()[Symbol.iterator]();
-    }
-    [Symbol.iterator]() {
-        return this.iterateSync();
-    }
-    /**
-     * Default async iteration function. Returns an AsyncGenerator that
-     * iterates over the results.
-     */
-    iterate() {
-        return this.stream()[Symbol.asyncIterator]();
-    }
-    [Symbol.asyncIterator]() {
-        return this.iterate();
-    }
-}
-exports.Glob = Glob;
-//# sourceMappingURL=glob.js.map
-
-/***/ }),
-
-/***/ 3502:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.hasMagic = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
-/**
- * Return true if the patterns provided contain any magic glob characters,
- * given the options provided.
- *
- * Brace expansion is not considered "magic" unless the `magicalBraces` option
- * is set, as brace expansion just turns one string into an array of strings.
- * So a pattern like `'x{a,b}y'` would return `false`, because `'xay'` and
- * `'xby'` both do not contain any magic glob characters, and it's treated the
- * same as if you had called it on `['xay', 'xby']`. When `magicalBraces:true`
- * is in the options, brace expansion _is_ treated as a pattern having magic.
- */
-const hasMagic = (pattern, options = {}) => {
-    if (!Array.isArray(pattern)) {
-        pattern = [pattern];
-    }
-    for (const p of pattern) {
-        if (new minimatch_1.Minimatch(p, options).hasMagic())
-            return true;
-    }
-    return false;
-};
-exports.hasMagic = hasMagic;
-//# sourceMappingURL=has-magic.js.map
-
-/***/ }),
-
-/***/ 5907:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-// give it a pattern, and it'll be able to tell you if
-// a given path should be ignored.
-// Ignoring a path ignores its children if the pattern ends in /**
-// Ignores are always parsed in dot:true mode
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Ignore = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
-const pattern_js_1 = __nccwpck_require__(6066);
-const defaultPlatform = typeof process === 'object' &&
-    process &&
-    typeof process.platform === 'string'
-    ? process.platform
-    : 'linux';
-/**
- * Class used to process ignored patterns
- */
-class Ignore {
-    relative;
-    relativeChildren;
-    absolute;
-    absoluteChildren;
-    constructor(ignored, { nobrace, nocase, noext, noglobstar, platform = defaultPlatform, }) {
-        this.relative = [];
-        this.absolute = [];
-        this.relativeChildren = [];
-        this.absoluteChildren = [];
-        const mmopts = {
-            dot: true,
-            nobrace,
-            nocase,
-            noext,
-            noglobstar,
-            optimizationLevel: 2,
-            platform,
-            nocomment: true,
-            nonegate: true,
-        };
-        // this is a little weird, but it gives us a clean set of optimized
-        // minimatch matchers, without getting tripped up if one of them
-        // ends in /** inside a brace section, and it's only inefficient at
-        // the start of the walk, not along it.
-        // It'd be nice if the Pattern class just had a .test() method, but
-        // handling globstars is a bit of a pita, and that code already lives
-        // in minimatch anyway.
-        // Another way would be if maybe Minimatch could take its set/globParts
-        // as an option, and then we could at least just use Pattern to test
-        // for absolute-ness.
-        // Yet another way, Minimatch could take an array of glob strings, and
-        // a cwd option, and do the right thing.
-        for (const ign of ignored) {
-            const mm = new minimatch_1.Minimatch(ign, mmopts);
-            for (let i = 0; i < mm.set.length; i++) {
-                const parsed = mm.set[i];
-                const globParts = mm.globParts[i];
-                const p = new pattern_js_1.Pattern(parsed, globParts, 0, platform);
-                const m = new minimatch_1.Minimatch(p.globString(), mmopts);
-                const children = globParts[globParts.length - 1] === '**';
-                const absolute = p.isAbsolute();
-                if (absolute)
-                    this.absolute.push(m);
-                else
-                    this.relative.push(m);
-                if (children) {
-                    if (absolute)
-                        this.absoluteChildren.push(m);
-                    else
-                        this.relativeChildren.push(m);
-                }
-            }
-        }
-    }
-    ignored(p) {
-        const fullpath = p.fullpath();
-        const fullpaths = `${fullpath}/`;
-        const relative = p.relative() || '.';
-        const relatives = `${relative}/`;
-        for (const m of this.relative) {
-            if (m.match(relative) || m.match(relatives))
-                return true;
-        }
-        for (const m of this.absolute) {
-            if (m.match(fullpath) || m.match(fullpaths))
-                return true;
-        }
-        return false;
-    }
-    childrenIgnored(p) {
-        const fullpath = p.fullpath() + '/';
-        const relative = (p.relative() || '.') + '/';
-        for (const m of this.relativeChildren) {
-            if (m.match(relative))
-                return true;
-        }
-        for (const m of this.absoluteChildren) {
-            if (m.match(fullpath))
-                true;
-        }
-        return false;
-    }
-}
-exports.Ignore = Ignore;
-//# sourceMappingURL=ignore.js.map
-
-/***/ }),
-
-/***/ 169:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.glob = exports.hasMagic = exports.Glob = exports.unescape = exports.escape = exports.sync = exports.iterate = exports.iterateSync = exports.stream = exports.streamSync = exports.globIterate = exports.globIterateSync = exports.globSync = exports.globStream = exports.globStreamSync = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
-const glob_js_1 = __nccwpck_require__(7686);
-const has_magic_js_1 = __nccwpck_require__(3502);
-function globStreamSync(pattern, options = {}) {
-    return new glob_js_1.Glob(pattern, options).streamSync();
-}
-exports.globStreamSync = globStreamSync;
-function globStream(pattern, options = {}) {
-    return new glob_js_1.Glob(pattern, options).stream();
-}
-exports.globStream = globStream;
-function globSync(pattern, options = {}) {
-    return new glob_js_1.Glob(pattern, options).walkSync();
-}
-exports.globSync = globSync;
-async function glob_(pattern, options = {}) {
-    return new glob_js_1.Glob(pattern, options).walk();
-}
-function globIterateSync(pattern, options = {}) {
-    return new glob_js_1.Glob(pattern, options).iterateSync();
-}
-exports.globIterateSync = globIterateSync;
-function globIterate(pattern, options = {}) {
-    return new glob_js_1.Glob(pattern, options).iterate();
-}
-exports.globIterate = globIterate;
-// aliases: glob.sync.stream() glob.stream.sync() glob.sync() etc
-exports.streamSync = globStreamSync;
-exports.stream = Object.assign(globStream, { sync: globStreamSync });
-exports.iterateSync = globIterateSync;
-exports.iterate = Object.assign(globIterate, {
-    sync: globIterateSync,
-});
-exports.sync = Object.assign(globSync, {
-    stream: globStreamSync,
-    iterate: globIterateSync,
-});
-/* c8 ignore start */
-var minimatch_2 = __nccwpck_require__(3457);
-Object.defineProperty(exports, "escape", ({ enumerable: true, get: function () { return minimatch_2.escape; } }));
-Object.defineProperty(exports, "unescape", ({ enumerable: true, get: function () { return minimatch_2.unescape; } }));
-var glob_js_2 = __nccwpck_require__(7686);
-Object.defineProperty(exports, "Glob", ({ enumerable: true, get: function () { return glob_js_2.Glob; } }));
-var has_magic_js_2 = __nccwpck_require__(3502);
-Object.defineProperty(exports, "hasMagic", ({ enumerable: true, get: function () { return has_magic_js_2.hasMagic; } }));
-/* c8 ignore stop */
-exports.glob = Object.assign(glob_, {
-    glob: glob_,
-    globSync,
-    sync: exports.sync,
-    globStream,
-    stream: exports.stream,
-    globStreamSync,
-    streamSync: exports.streamSync,
-    globIterate,
-    iterate: exports.iterate,
-    globIterateSync,
-    iterateSync: exports.iterateSync,
-    Glob: glob_js_1.Glob,
-    hasMagic: has_magic_js_1.hasMagic,
-    escape: minimatch_1.escape,
-    unescape: minimatch_1.unescape,
-});
-exports.glob.glob = exports.glob;
-//# sourceMappingURL=index.js.map
-
-/***/ }),
-
-/***/ 6066:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-// this is just a very light wrapper around 2 arrays with an offset index
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Pattern = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
-const isPatternList = (pl) => pl.length >= 1;
-const isGlobList = (gl) => gl.length >= 1;
-/**
- * An immutable-ish view on an array of glob parts and their parsed
- * results
- */
-class Pattern {
-    #patternList;
-    #globList;
-    #index;
-    length;
-    #platform;
-    #rest;
-    #globString;
-    #isDrive;
-    #isUNC;
-    #isAbsolute;
-    #followGlobstar = true;
-    constructor(patternList, globList, index, platform) {
-        if (!isPatternList(patternList)) {
-            throw new TypeError('empty pattern list');
-        }
-        if (!isGlobList(globList)) {
-            throw new TypeError('empty glob list');
-        }
-        if (globList.length !== patternList.length) {
-            throw new TypeError('mismatched pattern list and glob list lengths');
-        }
-        this.length = patternList.length;
-        if (index < 0 || index >= this.length) {
-            throw new TypeError('index out of range');
-        }
-        this.#patternList = patternList;
-        this.#globList = globList;
-        this.#index = index;
-        this.#platform = platform;
-        // normalize root entries of absolute patterns on initial creation.
-        if (this.#index === 0) {
-            // c: => ['c:/']
-            // C:/ => ['C:/']
-            // C:/x => ['C:/', 'x']
-            // //host/share => ['//host/share/']
-            // //host/share/ => ['//host/share/']
-            // //host/share/x => ['//host/share/', 'x']
-            // /etc => ['/', 'etc']
-            // / => ['/']
-            if (this.isUNC()) {
-                // '' / '' / 'host' / 'share'
-                const [p0, p1, p2, p3, ...prest] = this.#patternList;
-                const [g0, g1, g2, g3, ...grest] = this.#globList;
-                if (prest[0] === '') {
-                    // ends in /
-                    prest.shift();
-                    grest.shift();
-                }
-                const p = [p0, p1, p2, p3, ''].join('/');
-                const g = [g0, g1, g2, g3, ''].join('/');
-                this.#patternList = [p, ...prest];
-                this.#globList = [g, ...grest];
-                this.length = this.#patternList.length;
-            }
-            else if (this.isDrive() || this.isAbsolute()) {
-                const [p1, ...prest] = this.#patternList;
-                const [g1, ...grest] = this.#globList;
-                if (prest[0] === '') {
-                    // ends in /
-                    prest.shift();
-                    grest.shift();
-                }
-                const p = p1 + '/';
-                const g = g1 + '/';
-                this.#patternList = [p, ...prest];
-                this.#globList = [g, ...grest];
-                this.length = this.#patternList.length;
-            }
-        }
-    }
-    /**
-     * The first entry in the parsed list of patterns
-     */
-    pattern() {
-        return this.#patternList[this.#index];
-    }
-    /**
-     * true of if pattern() returns a string
-     */
-    isString() {
-        return typeof this.#patternList[this.#index] === 'string';
-    }
-    /**
-     * true of if pattern() returns GLOBSTAR
-     */
-    isGlobstar() {
-        return this.#patternList[this.#index] === minimatch_1.GLOBSTAR;
-    }
-    /**
-     * true if pattern() returns a regexp
-     */
-    isRegExp() {
-        return this.#patternList[this.#index] instanceof RegExp;
-    }
-    /**
-     * The /-joined set of glob parts that make up this pattern
-     */
-    globString() {
-        return (this.#globString =
-            this.#globString ||
-                (this.#index === 0
-                    ? this.isAbsolute()
-                        ? this.#globList[0] + this.#globList.slice(1).join('/')
-                        : this.#globList.join('/')
-                    : this.#globList.slice(this.#index).join('/')));
-    }
-    /**
-     * true if there are more pattern parts after this one
-     */
-    hasMore() {
-        return this.length > this.#index + 1;
-    }
-    /**
-     * The rest of the pattern after this part, or null if this is the end
-     */
-    rest() {
-        if (this.#rest !== undefined)
-            return this.#rest;
-        if (!this.hasMore())
-            return (this.#rest = null);
-        this.#rest = new Pattern(this.#patternList, this.#globList, this.#index + 1, this.#platform);
-        this.#rest.#isAbsolute = this.#isAbsolute;
-        this.#rest.#isUNC = this.#isUNC;
-        this.#rest.#isDrive = this.#isDrive;
-        return this.#rest;
-    }
-    /**
-     * true if the pattern represents a //unc/path/ on windows
-     */
-    isUNC() {
-        const pl = this.#patternList;
-        return this.#isUNC !== undefined
-            ? this.#isUNC
-            : (this.#isUNC =
-                this.#platform === 'win32' &&
-                    this.#index === 0 &&
-                    pl[0] === '' &&
-                    pl[1] === '' &&
-                    typeof pl[2] === 'string' &&
-                    !!pl[2] &&
-                    typeof pl[3] === 'string' &&
-                    !!pl[3]);
-    }
-    // pattern like C:/...
-    // split = ['C:', ...]
-    // XXX: would be nice to handle patterns like `c:*` to test the cwd
-    // in c: for *, but I don't know of a way to even figure out what that
-    // cwd is without actually chdir'ing into it?
-    /**
-     * True if the pattern starts with a drive letter on Windows
-     */
-    isDrive() {
-        const pl = this.#patternList;
-        return this.#isDrive !== undefined
-            ? this.#isDrive
-            : (this.#isDrive =
-                this.#platform === 'win32' &&
-                    this.#index === 0 &&
-                    this.length > 1 &&
-                    typeof pl[0] === 'string' &&
-                    /^[a-z]:$/i.test(pl[0]));
-    }
-    // pattern = '/' or '/...' or '/x/...'
-    // split = ['', ''] or ['', ...] or ['', 'x', ...]
-    // Drive and UNC both considered absolute on windows
-    /**
-     * True if the pattern is rooted on an absolute path
-     */
-    isAbsolute() {
-        const pl = this.#patternList;
-        return this.#isAbsolute !== undefined
-            ? this.#isAbsolute
-            : (this.#isAbsolute =
-                (pl[0] === '' && pl.length > 1) ||
-                    this.isDrive() ||
-                    this.isUNC());
-    }
-    /**
-     * consume the root of the pattern, and return it
-     */
-    root() {
-        const p = this.#patternList[0];
-        return typeof p === 'string' && this.isAbsolute() && this.#index === 0
-            ? p
-            : '';
-    }
-    /**
-     * Check to see if the current globstar pattern is allowed to follow
-     * a symbolic link.
-     */
-    checkFollowGlobstar() {
-        return !(this.#index === 0 ||
-            !this.isGlobstar() ||
-            !this.#followGlobstar);
-    }
-    /**
-     * Mark that the current globstar pattern is following a symbolic link
-     */
-    markFollowGlobstar() {
-        if (this.#index === 0 || !this.isGlobstar() || !this.#followGlobstar)
-            return false;
-        this.#followGlobstar = false;
-        return true;
-    }
-}
-exports.Pattern = Pattern;
-//# sourceMappingURL=pattern.js.map
-
-/***/ }),
-
-/***/ 2487:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-// synchronous utility for filtering entries and calculating subwalks
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.Processor = exports.SubWalks = exports.MatchRecord = exports.HasWalkedCache = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
-/**
- * A cache of which patterns have been processed for a given Path
- */
-class HasWalkedCache {
-    store;
-    constructor(store = new Map()) {
-        this.store = store;
-    }
-    copy() {
-        return new HasWalkedCache(new Map(this.store));
-    }
-    hasWalked(target, pattern) {
-        return this.store.get(target.fullpath())?.has(pattern.globString());
-    }
-    storeWalked(target, pattern) {
-        const fullpath = target.fullpath();
-        const cached = this.store.get(fullpath);
-        if (cached)
-            cached.add(pattern.globString());
-        else
-            this.store.set(fullpath, new Set([pattern.globString()]));
-    }
-}
-exports.HasWalkedCache = HasWalkedCache;
-/**
- * A record of which paths have been matched in a given walk step,
- * and whether they only are considered a match if they are a directory,
- * and whether their absolute or relative path should be returned.
- */
-class MatchRecord {
-    store = new Map();
-    add(target, absolute, ifDir) {
-        const n = (absolute ? 2 : 0) | (ifDir ? 1 : 0);
-        const current = this.store.get(target);
-        this.store.set(target, current === undefined ? n : n & current);
-    }
-    // match, absolute, ifdir
-    entries() {
-        return [...this.store.entries()].map(([path, n]) => [
-            path,
-            !!(n & 2),
-            !!(n & 1),
-        ]);
-    }
-}
-exports.MatchRecord = MatchRecord;
-/**
- * A collection of patterns that must be processed in a subsequent step
- * for a given path.
- */
-class SubWalks {
-    store = new Map();
-    add(target, pattern) {
-        if (!target.canReaddir()) {
-            return;
-        }
-        const subs = this.store.get(target);
-        if (subs) {
-            if (!subs.find(p => p.globString() === pattern.globString())) {
-                subs.push(pattern);
-            }
-        }
-        else
-            this.store.set(target, [pattern]);
-    }
-    get(target) {
-        const subs = this.store.get(target);
-        /* c8 ignore start */
-        if (!subs) {
-            throw new Error('attempting to walk unknown path');
-        }
-        /* c8 ignore stop */
-        return subs;
-    }
-    entries() {
-        return this.keys().map(k => [k, this.store.get(k)]);
-    }
-    keys() {
-        return [...this.store.keys()].filter(t => t.canReaddir());
-    }
-}
-exports.SubWalks = SubWalks;
-/**
- * The class that processes patterns for a given path.
- *
- * Handles child entry filtering, and determining whether a path's
- * directory contents must be read.
- */
-class Processor {
-    hasWalkedCache;
-    matches = new MatchRecord();
-    subwalks = new SubWalks();
-    patterns;
-    follow;
-    dot;
-    opts;
-    constructor(opts, hasWalkedCache) {
-        this.opts = opts;
-        this.follow = !!opts.follow;
-        this.dot = !!opts.dot;
-        this.hasWalkedCache = hasWalkedCache
-            ? hasWalkedCache.copy()
-            : new HasWalkedCache();
-    }
-    processPatterns(target, patterns) {
-        this.patterns = patterns;
-        const processingSet = patterns.map(p => [target, p]);
-        // map of paths to the magic-starting subwalks they need to walk
-        // first item in patterns is the filter
-        for (let [t, pattern] of processingSet) {
-            this.hasWalkedCache.storeWalked(t, pattern);
-            const root = pattern.root();
-            const absolute = pattern.isAbsolute() && this.opts.absolute !== false;
-            // start absolute patterns at root
-            if (root) {
-                t = t.resolve(root === '/' && this.opts.root !== undefined
-                    ? this.opts.root
-                    : root);
-                const rest = pattern.rest();
-                if (!rest) {
-                    this.matches.add(t, true, false);
-                    continue;
-                }
-                else {
-                    pattern = rest;
-                }
-            }
-            if (t.isENOENT())
-                continue;
-            let p;
-            let rest;
-            let changed = false;
-            while (typeof (p = pattern.pattern()) === 'string' &&
-                (rest = pattern.rest())) {
-                const c = t.resolve(p);
-                // we can be reasonably sure that .. is a readable dir
-                if (c.isUnknown() && p !== '..')
-                    break;
-                t = c;
-                pattern = rest;
-                changed = true;
-            }
-            p = pattern.pattern();
-            rest = pattern.rest();
-            if (changed) {
-                if (this.hasWalkedCache.hasWalked(t, pattern))
-                    continue;
-                this.hasWalkedCache.storeWalked(t, pattern);
-            }
-            // now we have either a final string for a known entry,
-            // more strings for an unknown entry,
-            // or a pattern starting with magic, mounted on t.
-            if (typeof p === 'string') {
-                // must be final entry
-                if (!rest) {
-                    const ifDir = p === '..' || p === '' || p === '.';
-                    this.matches.add(t.resolve(p), absolute, ifDir);
-                }
-                else {
-                    this.subwalks.add(t, pattern);
-                }
-                continue;
-            }
-            else if (p === minimatch_1.GLOBSTAR) {
-                // if no rest, match and subwalk pattern
-                // if rest, process rest and subwalk pattern
-                // if it's a symlink, but we didn't get here by way of a
-                // globstar match (meaning it's the first time THIS globstar
-                // has traversed a symlink), then we follow it. Otherwise, stop.
-                if (!t.isSymbolicLink() ||
-                    this.follow ||
-                    pattern.checkFollowGlobstar()) {
-                    this.subwalks.add(t, pattern);
-                }
-                const rp = rest?.pattern();
-                const rrest = rest?.rest();
-                if (!rest || ((rp === '' || rp === '.') && !rrest)) {
-                    // only HAS to be a dir if it ends in **/ or **/.
-                    // but ending in ** will match files as well.
-                    this.matches.add(t, absolute, rp === '' || rp === '.');
-                }
-                else {
-                    if (rp === '..') {
-                        // this would mean you're matching **/.. at the fs root,
-                        // and no thanks, I'm not gonna test that specific case.
-                        /* c8 ignore start */
-                        const tp = t.parent || t;
-                        /* c8 ignore stop */
-                        if (!rrest)
-                            this.matches.add(tp, absolute, true);
-                        else if (!this.hasWalkedCache.hasWalked(tp, rrest)) {
-                            this.subwalks.add(tp, rrest);
-                        }
-                    }
-                }
-            }
-            else if (p instanceof RegExp) {
-                this.subwalks.add(t, pattern);
-            }
-        }
-        return this;
-    }
-    subwalkTargets() {
-        return this.subwalks.keys();
-    }
-    child() {
-        return new Processor(this.opts, this.hasWalkedCache);
-    }
-    // return a new Processor containing the subwalks for each
-    // child entry, and a set of matches, and
-    // a hasWalkedCache that's a copy of this one
-    // then we're going to call
-    filterEntries(parent, entries) {
-        const patterns = this.subwalks.get(parent);
-        // put matches and entry walks into the results processor
-        const results = this.child();
-        for (const e of entries) {
-            for (const pattern of patterns) {
-                const absolute = pattern.isAbsolute();
-                const p = pattern.pattern();
-                const rest = pattern.rest();
-                if (p === minimatch_1.GLOBSTAR) {
-                    results.testGlobstar(e, pattern, rest, absolute);
-                }
-                else if (p instanceof RegExp) {
-                    results.testRegExp(e, p, rest, absolute);
-                }
-                else {
-                    results.testString(e, p, rest, absolute);
-                }
-            }
-        }
-        return results;
-    }
-    testGlobstar(e, pattern, rest, absolute) {
-        if (this.dot || !e.name.startsWith('.')) {
-            if (!pattern.hasMore()) {
-                this.matches.add(e, absolute, false);
-            }
-            if (e.canReaddir()) {
-                // if we're in follow mode or it's not a symlink, just keep
-                // testing the same pattern. If there's more after the globstar,
-                // then this symlink consumes the globstar. If not, then we can
-                // follow at most ONE symlink along the way, so we mark it, which
-                // also checks to ensure that it wasn't already marked.
-                if (this.follow || !e.isSymbolicLink()) {
-                    this.subwalks.add(e, pattern);
-                }
-                else if (e.isSymbolicLink()) {
-                    if (rest && pattern.checkFollowGlobstar()) {
-                        this.subwalks.add(e, rest);
-                    }
-                    else if (pattern.markFollowGlobstar()) {
-                        this.subwalks.add(e, pattern);
-                    }
-                }
-            }
-        }
-        // if the NEXT thing matches this entry, then also add
-        // the rest.
-        if (rest) {
-            const rp = rest.pattern();
-            if (typeof rp === 'string' &&
-                // dots and empty were handled already
-                rp !== '..' &&
-                rp !== '' &&
-                rp !== '.') {
-                this.testString(e, rp, rest.rest(), absolute);
-            }
-            else if (rp === '..') {
-                /* c8 ignore start */
-                const ep = e.parent || e;
-                /* c8 ignore stop */
-                this.subwalks.add(ep, rest);
-            }
-            else if (rp instanceof RegExp) {
-                this.testRegExp(e, rp, rest.rest(), absolute);
-            }
-        }
-    }
-    testRegExp(e, p, rest, absolute) {
-        if (!p.test(e.name))
-            return;
-        if (!rest) {
-            this.matches.add(e, absolute, false);
-        }
-        else {
-            this.subwalks.add(e, rest);
-        }
-    }
-    testString(e, p, rest, absolute) {
-        // should never happen?
-        if (!e.isNamed(p))
-            return;
-        if (!rest) {
-            this.matches.add(e, absolute, false);
-        }
-        else {
-            this.subwalks.add(e, rest);
-        }
-    }
-}
-exports.Processor = Processor;
-//# sourceMappingURL=processor.js.map
-
-/***/ }),
-
-/***/ 9849:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GlobStream = exports.GlobWalker = exports.GlobUtil = void 0;
-/**
- * Single-use utility classes to provide functionality to the {@link Glob}
- * methods.
- *
- * @module
- */
-const minipass_1 = __nccwpck_require__(5223);
-const ignore_js_1 = __nccwpck_require__(5907);
-const processor_js_1 = __nccwpck_require__(2487);
-const makeIgnore = (ignore, opts) => typeof ignore === 'string'
-    ? new ignore_js_1.Ignore([ignore], opts)
-    : Array.isArray(ignore)
-        ? new ignore_js_1.Ignore(ignore, opts)
-        : ignore;
-/**
- * basic walking utilities that all the glob walker types use
- */
-class GlobUtil {
-    path;
-    patterns;
-    opts;
-    seen = new Set();
-    paused = false;
-    aborted = false;
-    #onResume = [];
-    #ignore;
-    #sep;
-    signal;
-    maxDepth;
-    constructor(patterns, path, opts) {
-        this.patterns = patterns;
-        this.path = path;
-        this.opts = opts;
-        this.#sep = !opts.posix && opts.platform === 'win32' ? '\\' : '/';
-        if (opts.ignore) {
-            this.#ignore = makeIgnore(opts.ignore, opts);
-        }
-        // ignore, always set with maxDepth, but it's optional on the
-        // GlobOptions type
-        /* c8 ignore start */
-        this.maxDepth = opts.maxDepth || Infinity;
-        /* c8 ignore stop */
-        if (opts.signal) {
-            this.signal = opts.signal;
-            this.signal.addEventListener('abort', () => {
-                this.#onResume.length = 0;
-            });
-        }
-    }
-    #ignored(path) {
-        return this.seen.has(path) || !!this.#ignore?.ignored?.(path);
-    }
-    #childrenIgnored(path) {
-        return !!this.#ignore?.childrenIgnored?.(path);
-    }
-    // backpressure mechanism
-    pause() {
-        this.paused = true;
-    }
-    resume() {
-        /* c8 ignore start */
-        if (this.signal?.aborted)
-            return;
-        /* c8 ignore stop */
-        this.paused = false;
-        let fn = undefined;
-        while (!this.paused && (fn = this.#onResume.shift())) {
-            fn();
-        }
-    }
-    onResume(fn) {
-        if (this.signal?.aborted)
-            return;
-        /* c8 ignore start */
-        if (!this.paused) {
-            fn();
-        }
-        else {
-            /* c8 ignore stop */
-            this.#onResume.push(fn);
-        }
-    }
-    // do the requisite realpath/stat checking, and return the path
-    // to add or undefined to filter it out.
-    async matchCheck(e, ifDir) {
-        if (ifDir && this.opts.nodir)
-            return undefined;
-        let rpc;
-        if (this.opts.realpath) {
-            rpc = e.realpathCached() || (await e.realpath());
-            if (!rpc)
-                return undefined;
-            e = rpc;
-        }
-        const needStat = e.isUnknown() || this.opts.stat;
-        return this.matchCheckTest(needStat ? await e.lstat() : e, ifDir);
-    }
-    matchCheckTest(e, ifDir) {
-        return e &&
-            (this.maxDepth === Infinity || e.depth() <= this.maxDepth) &&
-            (!ifDir || e.canReaddir()) &&
-            (!this.opts.nodir || !e.isDirectory()) &&
-            !this.#ignored(e)
-            ? e
-            : undefined;
-    }
-    matchCheckSync(e, ifDir) {
-        if (ifDir && this.opts.nodir)
-            return undefined;
-        let rpc;
-        if (this.opts.realpath) {
-            rpc = e.realpathCached() || e.realpathSync();
-            if (!rpc)
-                return undefined;
-            e = rpc;
-        }
-        const needStat = e.isUnknown() || this.opts.stat;
-        return this.matchCheckTest(needStat ? e.lstatSync() : e, ifDir);
-    }
-    matchFinish(e, absolute) {
-        if (this.#ignored(e))
-            return;
-        const abs = this.opts.absolute === undefined ? absolute : this.opts.absolute;
-        this.seen.add(e);
-        const mark = this.opts.mark && e.isDirectory() ? this.#sep : '';
-        // ok, we have what we need!
-        if (this.opts.withFileTypes) {
-            this.matchEmit(e);
-        }
-        else if (abs) {
-            const abs = this.opts.posix ? e.fullpathPosix() : e.fullpath();
-            this.matchEmit(abs + mark);
-        }
-        else {
-            const rel = this.opts.posix ? e.relativePosix() : e.relative();
-            const pre = this.opts.dotRelative && !rel.startsWith('..' + this.#sep)
-                ? '.' + this.#sep
-                : '';
-            this.matchEmit(!rel ? '.' + mark : pre + rel + mark);
-        }
-    }
-    async match(e, absolute, ifDir) {
-        const p = await this.matchCheck(e, ifDir);
-        if (p)
-            this.matchFinish(p, absolute);
-    }
-    matchSync(e, absolute, ifDir) {
-        const p = this.matchCheckSync(e, ifDir);
-        if (p)
-            this.matchFinish(p, absolute);
-    }
-    walkCB(target, patterns, cb) {
-        /* c8 ignore start */
-        if (this.signal?.aborted)
-            cb();
-        /* c8 ignore stop */
-        this.walkCB2(target, patterns, new processor_js_1.Processor(this.opts), cb);
-    }
-    walkCB2(target, patterns, processor, cb) {
-        if (this.#childrenIgnored(target))
-            return cb();
-        if (this.signal?.aborted)
-            cb();
-        if (this.paused) {
-            this.onResume(() => this.walkCB2(target, patterns, processor, cb));
-            return;
-        }
-        processor.processPatterns(target, patterns);
-        // done processing.  all of the above is sync, can be abstracted out.
-        // subwalks is a map of paths to the entry filters they need
-        // matches is a map of paths to [absolute, ifDir] tuples.
-        let tasks = 1;
-        const next = () => {
-            if (--tasks === 0)
-                cb();
-        };
-        for (const [m, absolute, ifDir] of processor.matches.entries()) {
-            if (this.#ignored(m))
-                continue;
-            tasks++;
-            this.match(m, absolute, ifDir).then(() => next());
-        }
-        for (const t of processor.subwalkTargets()) {
-            if (this.maxDepth !== Infinity && t.depth() >= this.maxDepth) {
-                continue;
-            }
-            tasks++;
-            const childrenCached = t.readdirCached();
-            if (t.calledReaddir())
-                this.walkCB3(t, childrenCached, processor, next);
-            else {
-                t.readdirCB((_, entries) => this.walkCB3(t, entries, processor, next), true);
-            }
-        }
-        next();
-    }
-    walkCB3(target, entries, processor, cb) {
-        processor = processor.filterEntries(target, entries);
-        let tasks = 1;
-        const next = () => {
-            if (--tasks === 0)
-                cb();
-        };
-        for (const [m, absolute, ifDir] of processor.matches.entries()) {
-            if (this.#ignored(m))
-                continue;
-            tasks++;
-            this.match(m, absolute, ifDir).then(() => next());
-        }
-        for (const [target, patterns] of processor.subwalks.entries()) {
-            tasks++;
-            this.walkCB2(target, patterns, processor.child(), next);
-        }
-        next();
-    }
-    walkCBSync(target, patterns, cb) {
-        /* c8 ignore start */
-        if (this.signal?.aborted)
-            cb();
-        /* c8 ignore stop */
-        this.walkCB2Sync(target, patterns, new processor_js_1.Processor(this.opts), cb);
-    }
-    walkCB2Sync(target, patterns, processor, cb) {
-        if (this.#childrenIgnored(target))
-            return cb();
-        if (this.signal?.aborted)
-            cb();
-        if (this.paused) {
-            this.onResume(() => this.walkCB2Sync(target, patterns, processor, cb));
-            return;
-        }
-        processor.processPatterns(target, patterns);
-        // done processing.  all of the above is sync, can be abstracted out.
-        // subwalks is a map of paths to the entry filters they need
-        // matches is a map of paths to [absolute, ifDir] tuples.
-        let tasks = 1;
-        const next = () => {
-            if (--tasks === 0)
-                cb();
-        };
-        for (const [m, absolute, ifDir] of processor.matches.entries()) {
-            if (this.#ignored(m))
-                continue;
-            this.matchSync(m, absolute, ifDir);
-        }
-        for (const t of processor.subwalkTargets()) {
-            if (this.maxDepth !== Infinity && t.depth() >= this.maxDepth) {
-                continue;
-            }
-            tasks++;
-            const children = t.readdirSync();
-            this.walkCB3Sync(t, children, processor, next);
-        }
-        next();
-    }
-    walkCB3Sync(target, entries, processor, cb) {
-        processor = processor.filterEntries(target, entries);
-        let tasks = 1;
-        const next = () => {
-            if (--tasks === 0)
-                cb();
-        };
-        for (const [m, absolute, ifDir] of processor.matches.entries()) {
-            if (this.#ignored(m))
-                continue;
-            this.matchSync(m, absolute, ifDir);
-        }
-        for (const [target, patterns] of processor.subwalks.entries()) {
-            tasks++;
-            this.walkCB2Sync(target, patterns, processor.child(), next);
-        }
-        next();
-    }
-}
-exports.GlobUtil = GlobUtil;
-class GlobWalker extends GlobUtil {
-    matches;
-    constructor(patterns, path, opts) {
-        super(patterns, path, opts);
-        this.matches = new Set();
-    }
-    matchEmit(e) {
-        this.matches.add(e);
-    }
-    async walk() {
-        if (this.signal?.aborted)
-            throw this.signal.reason;
-        if (this.path.isUnknown()) {
-            await this.path.lstat();
-        }
-        await new Promise((res, rej) => {
-            this.walkCB(this.path, this.patterns, () => {
-                if (this.signal?.aborted) {
-                    rej(this.signal.reason);
-                }
-                else {
-                    res(this.matches);
-                }
-            });
-        });
-        return this.matches;
-    }
-    walkSync() {
-        if (this.signal?.aborted)
-            throw this.signal.reason;
-        if (this.path.isUnknown()) {
-            this.path.lstatSync();
-        }
-        // nothing for the callback to do, because this never pauses
-        this.walkCBSync(this.path, this.patterns, () => {
-            if (this.signal?.aborted)
-                throw this.signal.reason;
-        });
-        return this.matches;
-    }
-}
-exports.GlobWalker = GlobWalker;
-class GlobStream extends GlobUtil {
-    results;
-    constructor(patterns, path, opts) {
-        super(patterns, path, opts);
-        this.results = new minipass_1.Minipass({
-            signal: this.signal,
-            objectMode: true,
-        });
-        this.results.on('drain', () => this.resume());
-        this.results.on('resume', () => this.resume());
-    }
-    matchEmit(e) {
-        this.results.write(e);
-        if (!this.results.flowing)
-            this.pause();
-    }
-    stream() {
-        const target = this.path;
-        if (target.isUnknown()) {
-            target.lstat().then(() => {
-                this.walkCB(target, this.patterns, () => this.results.end());
-            });
-        }
-        else {
-            this.walkCB(target, this.patterns, () => this.results.end());
-        }
-        return this.results;
-    }
-    streamSync() {
-        if (this.path.isUnknown()) {
-            this.path.lstatSync();
-        }
-        this.walkCBSync(this.path, this.patterns, () => this.results.end());
-        return this.results;
-    }
-}
-exports.GlobStream = GlobStream;
-//# sourceMappingURL=walker.js.map
-
-/***/ }),
-
-/***/ 5223:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-const proc =
-  typeof process === 'object' && process
-    ? process
-    : {
-        stdout: null,
-        stderr: null,
-      }
-const EE = __nccwpck_require__(2361)
-const Stream = __nccwpck_require__(2781)
-const stringdecoder = __nccwpck_require__(1576)
-const SD = stringdecoder.StringDecoder
-
-const EOF = Symbol('EOF')
-const MAYBE_EMIT_END = Symbol('maybeEmitEnd')
-const EMITTED_END = Symbol('emittedEnd')
-const EMITTING_END = Symbol('emittingEnd')
-const EMITTED_ERROR = Symbol('emittedError')
-const CLOSED = Symbol('closed')
-const READ = Symbol('read')
-const FLUSH = Symbol('flush')
-const FLUSHCHUNK = Symbol('flushChunk')
-const ENCODING = Symbol('encoding')
-const DECODER = Symbol('decoder')
-const FLOWING = Symbol('flowing')
-const PAUSED = Symbol('paused')
-const RESUME = Symbol('resume')
-const BUFFER = Symbol('buffer')
-const PIPES = Symbol('pipes')
-const BUFFERLENGTH = Symbol('bufferLength')
-const BUFFERPUSH = Symbol('bufferPush')
-const BUFFERSHIFT = Symbol('bufferShift')
-const OBJECTMODE = Symbol('objectMode')
-// internal event when stream is destroyed
-const DESTROYED = Symbol('destroyed')
-// internal event when stream has an error
-const ERROR = Symbol('error')
-const EMITDATA = Symbol('emitData')
-const EMITEND = Symbol('emitEnd')
-const EMITEND2 = Symbol('emitEnd2')
-const ASYNC = Symbol('async')
-const ABORT = Symbol('abort')
-const ABORTED = Symbol('aborted')
-const SIGNAL = Symbol('signal')
-
-const defer = fn => Promise.resolve().then(fn)
-
-// TODO remove when Node v8 support drops
-const doIter = global._MP_NO_ITERATOR_SYMBOLS_ !== '1'
-const ASYNCITERATOR =
-  (doIter && Symbol.asyncIterator) || Symbol('asyncIterator not implemented')
-const ITERATOR =
-  (doIter && Symbol.iterator) || Symbol('iterator not implemented')
-
-// events that mean 'the stream is over'
-// these are treated specially, and re-emitted
-// if they are listened for after emitting.
-const isEndish = ev => ev === 'end' || ev === 'finish' || ev === 'prefinish'
-
-const isArrayBuffer = b =>
-  b instanceof ArrayBuffer ||
-  (typeof b === 'object' &&
-    b.constructor &&
-    b.constructor.name === 'ArrayBuffer' &&
-    b.byteLength >= 0)
-
-const isArrayBufferView = b => !Buffer.isBuffer(b) && ArrayBuffer.isView(b)
-
-class Pipe {
-  constructor(src, dest, opts) {
-    this.src = src
-    this.dest = dest
-    this.opts = opts
-    this.ondrain = () => src[RESUME]()
-    dest.on('drain', this.ondrain)
-  }
-  unpipe() {
-    this.dest.removeListener('drain', this.ondrain)
-  }
-  // istanbul ignore next - only here for the prototype
-  proxyErrors() {}
-  end() {
-    this.unpipe()
-    if (this.opts.end) this.dest.end()
-  }
-}
-
-class PipeProxyErrors extends Pipe {
-  unpipe() {
-    this.src.removeListener('error', this.proxyErrors)
-    super.unpipe()
-  }
-  constructor(src, dest, opts) {
-    super(src, dest, opts)
-    this.proxyErrors = er => dest.emit('error', er)
-    src.on('error', this.proxyErrors)
-  }
-}
-
-class Minipass extends Stream {
-  constructor(options) {
-    super()
-    this[FLOWING] = false
-    // whether we're explicitly paused
-    this[PAUSED] = false
-    this[PIPES] = []
-    this[BUFFER] = []
-    this[OBJECTMODE] = (options && options.objectMode) || false
-    if (this[OBJECTMODE]) this[ENCODING] = null
-    else this[ENCODING] = (options && options.encoding) || null
-    if (this[ENCODING] === 'buffer') this[ENCODING] = null
-    this[ASYNC] = (options && !!options.async) || false
-    this[DECODER] = this[ENCODING] ? new SD(this[ENCODING]) : null
-    this[EOF] = false
-    this[EMITTED_END] = false
-    this[EMITTING_END] = false
-    this[CLOSED] = false
-    this[EMITTED_ERROR] = null
-    this.writable = true
-    this.readable = true
-    this[BUFFERLENGTH] = 0
-    this[DESTROYED] = false
-    if (options && options.debugExposeBuffer === true) {
-      Object.defineProperty(this, 'buffer', { get: () => this[BUFFER] })
-    }
-    if (options && options.debugExposePipes === true) {
-      Object.defineProperty(this, 'pipes', { get: () => this[PIPES] })
-    }
-    this[SIGNAL] = options && options.signal
-    this[ABORTED] = false
-    if (this[SIGNAL]) {
-      this[SIGNAL].addEventListener('abort', () => this[ABORT]())
-      if (this[SIGNAL].aborted) {
-        this[ABORT]()
-      }
-    }
-  }
-
-  get bufferLength() {
-    return this[BUFFERLENGTH]
-  }
-
-  get encoding() {
-    return this[ENCODING]
-  }
-  set encoding(enc) {
-    if (this[OBJECTMODE]) throw new Error('cannot set encoding in objectMode')
-
-    if (
-      this[ENCODING] &&
-      enc !== this[ENCODING] &&
-      ((this[DECODER] && this[DECODER].lastNeed) || this[BUFFERLENGTH])
-    )
-      throw new Error('cannot change encoding')
-
-    if (this[ENCODING] !== enc) {
-      this[DECODER] = enc ? new SD(enc) : null
-      if (this[BUFFER].length)
-        this[BUFFER] = this[BUFFER].map(chunk => this[DECODER].write(chunk))
-    }
-
-    this[ENCODING] = enc
-  }
-
-  setEncoding(enc) {
-    this.encoding = enc
-  }
-
-  get objectMode() {
-    return this[OBJECTMODE]
-  }
-  set objectMode(om) {
-    this[OBJECTMODE] = this[OBJECTMODE] || !!om
-  }
-
-  get ['async']() {
-    return this[ASYNC]
-  }
-  set ['async'](a) {
-    this[ASYNC] = this[ASYNC] || !!a
-  }
-
-  // drop everything and get out of the flow completely
-  [ABORT]() {
-    this[ABORTED] = true
-    this.emit('abort', this[SIGNAL].reason)
-    this.destroy(this[SIGNAL].reason)
-  }
-
-  get aborted() {
-    return this[ABORTED]
-  }
-  set aborted(_) {}
-
-  write(chunk, encoding, cb) {
-    if (this[ABORTED]) return false
-    if (this[EOF]) throw new Error('write after end')
-
-    if (this[DESTROYED]) {
-      this.emit(
-        'error',
-        Object.assign(
-          new Error('Cannot call write after a stream was destroyed'),
-          { code: 'ERR_STREAM_DESTROYED' }
-        )
-      )
-      return true
-    }
-
-    if (typeof encoding === 'function') (cb = encoding), (encoding = 'utf8')
-
-    if (!encoding) encoding = 'utf8'
-
-    const fn = this[ASYNC] ? defer : f => f()
-
-    // convert array buffers and typed array views into buffers
-    // at some point in the future, we may want to do the opposite!
-    // leave strings and buffers as-is
-    // anything else switches us into object mode
-    if (!this[OBJECTMODE] && !Buffer.isBuffer(chunk)) {
-      if (isArrayBufferView(chunk))
-        chunk = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
-      else if (isArrayBuffer(chunk)) chunk = Buffer.from(chunk)
-      else if (typeof chunk !== 'string')
-        // use the setter so we throw if we have encoding set
-        this.objectMode = true
-    }
-
-    // handle object mode up front, since it's simpler
-    // this yields better performance, fewer checks later.
-    if (this[OBJECTMODE]) {
-      /* istanbul ignore if - maybe impossible? */
-      if (this.flowing && this[BUFFERLENGTH] !== 0) this[FLUSH](true)
-
-      if (this.flowing) this.emit('data', chunk)
-      else this[BUFFERPUSH](chunk)
-
-      if (this[BUFFERLENGTH] !== 0) this.emit('readable')
-
-      if (cb) fn(cb)
-
-      return this.flowing
-    }
-
-    // at this point the chunk is a buffer or string
-    // don't buffer it up or send it to the decoder
-    if (!chunk.length) {
-      if (this[BUFFERLENGTH] !== 0) this.emit('readable')
-      if (cb) fn(cb)
-      return this.flowing
-    }
-
-    // fast-path writing strings of same encoding to a stream with
-    // an empty buffer, skipping the buffer/decoder dance
-    if (
-      typeof chunk === 'string' &&
-      // unless it is a string already ready for us to use
-      !(encoding === this[ENCODING] && !this[DECODER].lastNeed)
-    ) {
-      chunk = Buffer.from(chunk, encoding)
-    }
-
-    if (Buffer.isBuffer(chunk) && this[ENCODING])
-      chunk = this[DECODER].write(chunk)
-
-    // Note: flushing CAN potentially switch us into not-flowing mode
-    if (this.flowing && this[BUFFERLENGTH] !== 0) this[FLUSH](true)
-
-    if (this.flowing) this.emit('data', chunk)
-    else this[BUFFERPUSH](chunk)
-
-    if (this[BUFFERLENGTH] !== 0) this.emit('readable')
-
-    if (cb) fn(cb)
-
-    return this.flowing
-  }
-
-  read(n) {
-    if (this[DESTROYED]) return null
-
-    if (this[BUFFERLENGTH] === 0 || n === 0 || n > this[BUFFERLENGTH]) {
-      this[MAYBE_EMIT_END]()
-      return null
-    }
-
-    if (this[OBJECTMODE]) n = null
-
-    if (this[BUFFER].length > 1 && !this[OBJECTMODE]) {
-      if (this.encoding) this[BUFFER] = [this[BUFFER].join('')]
-      else this[BUFFER] = [Buffer.concat(this[BUFFER], this[BUFFERLENGTH])]
-    }
-
-    const ret = this[READ](n || null, this[BUFFER][0])
-    this[MAYBE_EMIT_END]()
-    return ret
-  }
-
-  [READ](n, chunk) {
-    if (n === chunk.length || n === null) this[BUFFERSHIFT]()
-    else {
-      this[BUFFER][0] = chunk.slice(n)
-      chunk = chunk.slice(0, n)
-      this[BUFFERLENGTH] -= n
-    }
-
-    this.emit('data', chunk)
-
-    if (!this[BUFFER].length && !this[EOF]) this.emit('drain')
-
-    return chunk
-  }
-
-  end(chunk, encoding, cb) {
-    if (typeof chunk === 'function') (cb = chunk), (chunk = null)
-    if (typeof encoding === 'function') (cb = encoding), (encoding = 'utf8')
-    if (chunk) this.write(chunk, encoding)
-    if (cb) this.once('end', cb)
-    this[EOF] = true
-    this.writable = false
-
-    // if we haven't written anything, then go ahead and emit,
-    // even if we're not reading.
-    // we'll re-emit if a new 'end' listener is added anyway.
-    // This makes MP more suitable to write-only use cases.
-    if (this.flowing || !this[PAUSED]) this[MAYBE_EMIT_END]()
-    return this
-  }
-
-  // don't let the internal resume be overwritten
-  [RESUME]() {
-    if (this[DESTROYED]) return
-
-    this[PAUSED] = false
-    this[FLOWING] = true
-    this.emit('resume')
-    if (this[BUFFER].length) this[FLUSH]()
-    else if (this[EOF]) this[MAYBE_EMIT_END]()
-    else this.emit('drain')
-  }
-
-  resume() {
-    return this[RESUME]()
-  }
-
-  pause() {
-    this[FLOWING] = false
-    this[PAUSED] = true
-  }
-
-  get destroyed() {
-    return this[DESTROYED]
-  }
-
-  get flowing() {
-    return this[FLOWING]
-  }
-
-  get paused() {
-    return this[PAUSED]
-  }
-
-  [BUFFERPUSH](chunk) {
-    if (this[OBJECTMODE]) this[BUFFERLENGTH] += 1
-    else this[BUFFERLENGTH] += chunk.length
-    this[BUFFER].push(chunk)
-  }
-
-  [BUFFERSHIFT]() {
-    if (this[OBJECTMODE]) this[BUFFERLENGTH] -= 1
-    else this[BUFFERLENGTH] -= this[BUFFER][0].length
-    return this[BUFFER].shift()
-  }
-
-  [FLUSH](noDrain) {
-    do {} while (this[FLUSHCHUNK](this[BUFFERSHIFT]()) && this[BUFFER].length)
-
-    if (!noDrain && !this[BUFFER].length && !this[EOF]) this.emit('drain')
-  }
-
-  [FLUSHCHUNK](chunk) {
-    this.emit('data', chunk)
-    return this.flowing
-  }
-
-  pipe(dest, opts) {
-    if (this[DESTROYED]) return
-
-    const ended = this[EMITTED_END]
-    opts = opts || {}
-    if (dest === proc.stdout || dest === proc.stderr) opts.end = false
-    else opts.end = opts.end !== false
-    opts.proxyErrors = !!opts.proxyErrors
-
-    // piping an ended stream ends immediately
-    if (ended) {
-      if (opts.end) dest.end()
-    } else {
-      this[PIPES].push(
-        !opts.proxyErrors
-          ? new Pipe(this, dest, opts)
-          : new PipeProxyErrors(this, dest, opts)
-      )
-      if (this[ASYNC]) defer(() => this[RESUME]())
-      else this[RESUME]()
-    }
-
-    return dest
-  }
-
-  unpipe(dest) {
-    const p = this[PIPES].find(p => p.dest === dest)
-    if (p) {
-      this[PIPES].splice(this[PIPES].indexOf(p), 1)
-      p.unpipe()
-    }
-  }
-
-  addListener(ev, fn) {
-    return this.on(ev, fn)
-  }
-
-  on(ev, fn) {
-    const ret = super.on(ev, fn)
-    if (ev === 'data' && !this[PIPES].length && !this.flowing) this[RESUME]()
-    else if (ev === 'readable' && this[BUFFERLENGTH] !== 0)
-      super.emit('readable')
-    else if (isEndish(ev) && this[EMITTED_END]) {
-      super.emit(ev)
-      this.removeAllListeners(ev)
-    } else if (ev === 'error' && this[EMITTED_ERROR]) {
-      if (this[ASYNC]) defer(() => fn.call(this, this[EMITTED_ERROR]))
-      else fn.call(this, this[EMITTED_ERROR])
-    }
-    return ret
-  }
-
-  get emittedEnd() {
-    return this[EMITTED_END]
-  }
-
-  [MAYBE_EMIT_END]() {
-    if (
-      !this[EMITTING_END] &&
-      !this[EMITTED_END] &&
-      !this[DESTROYED] &&
-      this[BUFFER].length === 0 &&
-      this[EOF]
-    ) {
-      this[EMITTING_END] = true
-      this.emit('end')
-      this.emit('prefinish')
-      this.emit('finish')
-      if (this[CLOSED]) this.emit('close')
-      this[EMITTING_END] = false
-    }
-  }
-
-  emit(ev, data, ...extra) {
-    // error and close are only events allowed after calling destroy()
-    if (ev !== 'error' && ev !== 'close' && ev !== DESTROYED && this[DESTROYED])
-      return
-    else if (ev === 'data') {
-      return !this[OBJECTMODE] && !data
-        ? false
-        : this[ASYNC]
-        ? defer(() => this[EMITDATA](data))
-        : this[EMITDATA](data)
-    } else if (ev === 'end') {
-      return this[EMITEND]()
-    } else if (ev === 'close') {
-      this[CLOSED] = true
-      // don't emit close before 'end' and 'finish'
-      if (!this[EMITTED_END] && !this[DESTROYED]) return
-      const ret = super.emit('close')
-      this.removeAllListeners('close')
-      return ret
-    } else if (ev === 'error') {
-      this[EMITTED_ERROR] = data
-      super.emit(ERROR, data)
-      const ret =
-        !this[SIGNAL] || this.listeners('error').length
-          ? super.emit('error', data)
-          : false
-      this[MAYBE_EMIT_END]()
-      return ret
-    } else if (ev === 'resume') {
-      const ret = super.emit('resume')
-      this[MAYBE_EMIT_END]()
-      return ret
-    } else if (ev === 'finish' || ev === 'prefinish') {
-      const ret = super.emit(ev)
-      this.removeAllListeners(ev)
-      return ret
-    }
-
-    // Some other unknown event
-    const ret = super.emit(ev, data, ...extra)
-    this[MAYBE_EMIT_END]()
-    return ret
-  }
-
-  [EMITDATA](data) {
-    for (const p of this[PIPES]) {
-      if (p.dest.write(data) === false) this.pause()
-    }
-    const ret = super.emit('data', data)
-    this[MAYBE_EMIT_END]()
-    return ret
-  }
-
-  [EMITEND]() {
-    if (this[EMITTED_END]) return
-
-    this[EMITTED_END] = true
-    this.readable = false
-    if (this[ASYNC]) defer(() => this[EMITEND2]())
-    else this[EMITEND2]()
-  }
-
-  [EMITEND2]() {
-    if (this[DECODER]) {
-      const data = this[DECODER].end()
-      if (data) {
-        for (const p of this[PIPES]) {
-          p.dest.write(data)
-        }
-        super.emit('data', data)
-      }
-    }
-
-    for (const p of this[PIPES]) {
-      p.end()
-    }
-    const ret = super.emit('end')
-    this.removeAllListeners('end')
-    return ret
-  }
-
-  // const all = await stream.collect()
-  collect() {
-    const buf = []
-    if (!this[OBJECTMODE]) buf.dataLength = 0
-    // set the promise first, in case an error is raised
-    // by triggering the flow here.
-    const p = this.promise()
-    this.on('data', c => {
-      buf.push(c)
-      if (!this[OBJECTMODE]) buf.dataLength += c.length
-    })
-    return p.then(() => buf)
-  }
-
-  // const data = await stream.concat()
-  concat() {
-    return this[OBJECTMODE]
-      ? Promise.reject(new Error('cannot concat in objectMode'))
-      : this.collect().then(buf =>
-          this[OBJECTMODE]
-            ? Promise.reject(new Error('cannot concat in objectMode'))
-            : this[ENCODING]
-            ? buf.join('')
-            : Buffer.concat(buf, buf.dataLength)
-        )
-  }
-
-  // stream.promise().then(() => done, er => emitted error)
-  promise() {
-    return new Promise((resolve, reject) => {
-      this.on(DESTROYED, () => reject(new Error('stream destroyed')))
-      this.on('error', er => reject(er))
-      this.on('end', () => resolve())
-    })
-  }
-
-  // for await (let chunk of stream)
-  [ASYNCITERATOR]() {
-    let stopped = false
-    const stop = () => {
-      this.pause()
-      stopped = true
-      return Promise.resolve({ done: true })
-    }
-    const next = () => {
-      if (stopped) return stop()
-      const res = this.read()
-      if (res !== null) return Promise.resolve({ done: false, value: res })
-
-      if (this[EOF]) return stop()
-
-      let resolve = null
-      let reject = null
-      const onerr = er => {
-        this.removeListener('data', ondata)
-        this.removeListener('end', onend)
-        this.removeListener(DESTROYED, ondestroy)
-        stop()
-        reject(er)
-      }
-      const ondata = value => {
-        this.removeListener('error', onerr)
-        this.removeListener('end', onend)
-        this.removeListener(DESTROYED, ondestroy)
-        this.pause()
-        resolve({ value: value, done: !!this[EOF] })
-      }
-      const onend = () => {
-        this.removeListener('error', onerr)
-        this.removeListener('data', ondata)
-        this.removeListener(DESTROYED, ondestroy)
-        stop()
-        resolve({ done: true })
-      }
-      const ondestroy = () => onerr(new Error('stream destroyed'))
-      return new Promise((res, rej) => {
-        reject = rej
-        resolve = res
-        this.once(DESTROYED, ondestroy)
-        this.once('error', onerr)
-        this.once('end', onend)
-        this.once('data', ondata)
-      })
-    }
-
-    return {
-      next,
-      throw: stop,
-      return: stop,
-      [ASYNCITERATOR]() {
-        return this
-      },
-    }
-  }
-
-  // for (let chunk of stream)
-  [ITERATOR]() {
-    let stopped = false
-    const stop = () => {
-      this.pause()
-      this.removeListener(ERROR, stop)
-      this.removeListener(DESTROYED, stop)
-      this.removeListener('end', stop)
-      stopped = true
-      return { done: true }
-    }
-
-    const next = () => {
-      if (stopped) return stop()
-      const value = this.read()
-      return value === null ? stop() : { value }
-    }
-    this.once('end', stop)
-    this.once(ERROR, stop)
-    this.once(DESTROYED, stop)
-
-    return {
-      next,
-      throw: stop,
-      return: stop,
-      [ITERATOR]() {
-        return this
-      },
-    }
-  }
-
-  destroy(er) {
-    if (this[DESTROYED]) {
-      if (er) this.emit('error', er)
-      else this.emit(DESTROYED)
-      return this
-    }
-
-    this[DESTROYED] = true
-
-    // throw away all buffered data, it's never coming out
-    this[BUFFER].length = 0
-    this[BUFFERLENGTH] = 0
-
-    if (typeof this.close === 'function' && !this[CLOSED]) this.close()
-
-    if (er) this.emit('error', er)
-    // if no error to emit, still reject pending promises
-    else this.emit(DESTROYED)
-
-    return this
-  }
-
-  static isStream(s) {
-    return (
-      !!s &&
-      (s instanceof Minipass ||
-        s instanceof Stream ||
-        (s instanceof EE &&
-          // readable
-          (typeof s.pipe === 'function' ||
-            // writable
-            (typeof s.write === 'function' && typeof s.end === 'function'))))
-    )
-  }
-}
-
-exports.Minipass = Minipass
-
-
-/***/ }),
-
 /***/ 4294:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -10469,7 +6560,7 @@ const realpathSync = fs_1.realpathSync.native;
 // TODO: test perf of fs/promises realpath vs realpathCB,
 // since the promises one uses realpath.native
 const promises_1 = __nccwpck_require__(3292);
-const minipass_1 = __nccwpck_require__(7485);
+const minipass_1 = __nccwpck_require__(2425);
 const defaultFS = {
     lstatSync: fs_1.lstatSync,
     readdir: fs_1.readdir,
@@ -10956,6 +7047,29 @@ class PathBase {
      */
     isUnknown() {
         return (this.#type & IFMT) === UNKNOWN;
+    }
+    isType(type) {
+        return this[`is${type}`]();
+    }
+    getType() {
+        return this.isUnknown()
+            ? 'Unknown'
+            : this.isDirectory()
+                ? 'Directory'
+                : this.isFile()
+                    ? 'File'
+                    : this.isSymbolicLink()
+                        ? 'SymbolicLink'
+                        : this.isFIFO()
+                            ? 'FIFO'
+                            : this.isCharacterDevice()
+                                ? 'CharacterDevice'
+                                : this.isBlockDevice()
+                                    ? 'BlockDevice'
+                                    : /* c8 ignore start */ this.isSocket()
+                                        ? 'Socket'
+                                        : 'Unknown';
+        /* c8 ignore stop */
     }
     /**
      * Is the Path a regular file?
@@ -13275,6 +9389,15 @@ class LRUCache {
             if (v !== oldVal) {
                 if (this.#hasFetchMethod && this.#isBackgroundFetch(oldVal)) {
                     oldVal.__abortController.abort(new Error('replaced'));
+                    const { __staleWhileFetching: s } = oldVal;
+                    if (s !== undefined && !noDisposeOnSet) {
+                        if (this.#hasDispose) {
+                            this.#dispose?.(s, k, 'set');
+                        }
+                        if (this.#hasDisposeAfter) {
+                            this.#disposed?.push([s, k, 'set']);
+                        }
+                    }
                 }
                 else if (!noDisposeOnSet) {
                     if (this.#hasDispose) {
@@ -13528,7 +9651,7 @@ class LRUCache {
         const pcall = (res, rej) => {
             const fmp = this.#fetchMethod?.(k, v, fetchOpts);
             if (fmp && fmp instanceof Promise) {
-                fmp.then(v => res(v), rej);
+                fmp.then(v => res(v === undefined ? undefined : v), rej);
             }
             // ignored, we go until we finish, regardless.
             // defer check until we are actually aborting,
@@ -13536,7 +9659,7 @@ class LRUCache {
             ac.signal.addEventListener('abort', () => {
                 if (!options.ignoreFetchAbort ||
                     options.allowStaleOnFetchAbort) {
-                    res();
+                    res(undefined);
                     // when it eventually resolves, update the cache.
                     if (options.allowStaleOnFetchAbort) {
                         res = v => cb(v, true);
@@ -13831,6 +9954,3542 @@ class LRUCache {
 }
 exports.LRUCache = LRUCache;
 //# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ 2425:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Minipass = exports.isWritable = exports.isReadable = exports.isStream = void 0;
+const proc = typeof process === 'object' && process
+    ? process
+    : {
+        stdout: null,
+        stderr: null,
+    };
+const events_1 = __nccwpck_require__(2361);
+const stream_1 = __importDefault(__nccwpck_require__(2781));
+const string_decoder_1 = __nccwpck_require__(1576);
+/**
+ * Return true if the argument is a Minipass stream, Node stream, or something
+ * else that Minipass can interact with.
+ */
+const isStream = (s) => !!s &&
+    typeof s === 'object' &&
+    (s instanceof Minipass ||
+        s instanceof stream_1.default ||
+        (0, exports.isReadable)(s) ||
+        (0, exports.isWritable)(s));
+exports.isStream = isStream;
+/**
+ * Return true if the argument is a valid {@link Minipass.Readable}
+ */
+const isReadable = (s) => !!s &&
+    typeof s === 'object' &&
+    s instanceof events_1.EventEmitter &&
+    typeof s.pipe === 'function' &&
+    // node core Writable streams have a pipe() method, but it throws
+    s.pipe !== stream_1.default.Writable.prototype.pipe;
+exports.isReadable = isReadable;
+/**
+ * Return true if the argument is a valid {@link Minipass.Writable}
+ */
+const isWritable = (s) => !!s &&
+    typeof s === 'object' &&
+    s instanceof events_1.EventEmitter &&
+    typeof s.write === 'function' &&
+    typeof s.end === 'function';
+exports.isWritable = isWritable;
+const EOF = Symbol('EOF');
+const MAYBE_EMIT_END = Symbol('maybeEmitEnd');
+const EMITTED_END = Symbol('emittedEnd');
+const EMITTING_END = Symbol('emittingEnd');
+const EMITTED_ERROR = Symbol('emittedError');
+const CLOSED = Symbol('closed');
+const READ = Symbol('read');
+const FLUSH = Symbol('flush');
+const FLUSHCHUNK = Symbol('flushChunk');
+const ENCODING = Symbol('encoding');
+const DECODER = Symbol('decoder');
+const FLOWING = Symbol('flowing');
+const PAUSED = Symbol('paused');
+const RESUME = Symbol('resume');
+const BUFFER = Symbol('buffer');
+const PIPES = Symbol('pipes');
+const BUFFERLENGTH = Symbol('bufferLength');
+const BUFFERPUSH = Symbol('bufferPush');
+const BUFFERSHIFT = Symbol('bufferShift');
+const OBJECTMODE = Symbol('objectMode');
+// internal event when stream is destroyed
+const DESTROYED = Symbol('destroyed');
+// internal event when stream has an error
+const ERROR = Symbol('error');
+const EMITDATA = Symbol('emitData');
+const EMITEND = Symbol('emitEnd');
+const EMITEND2 = Symbol('emitEnd2');
+const ASYNC = Symbol('async');
+const ABORT = Symbol('abort');
+const ABORTED = Symbol('aborted');
+const SIGNAL = Symbol('signal');
+const DATALISTENERS = Symbol('dataListeners');
+const DISCARDED = Symbol('discarded');
+const defer = (fn) => Promise.resolve().then(fn);
+const nodefer = (fn) => fn();
+const isEndish = (ev) => ev === 'end' || ev === 'finish' || ev === 'prefinish';
+const isArrayBufferLike = (b) => b instanceof ArrayBuffer ||
+    (!!b &&
+        typeof b === 'object' &&
+        b.constructor &&
+        b.constructor.name === 'ArrayBuffer' &&
+        b.byteLength >= 0);
+const isArrayBufferView = (b) => !Buffer.isBuffer(b) && ArrayBuffer.isView(b);
+/**
+ * Internal class representing a pipe to a destination stream.
+ *
+ * @internal
+ */
+class Pipe {
+    src;
+    dest;
+    opts;
+    ondrain;
+    constructor(src, dest, opts) {
+        this.src = src;
+        this.dest = dest;
+        this.opts = opts;
+        this.ondrain = () => src[RESUME]();
+        this.dest.on('drain', this.ondrain);
+    }
+    unpipe() {
+        this.dest.removeListener('drain', this.ondrain);
+    }
+    // only here for the prototype
+    /* c8 ignore start */
+    proxyErrors(_er) { }
+    /* c8 ignore stop */
+    end() {
+        this.unpipe();
+        if (this.opts.end)
+            this.dest.end();
+    }
+}
+/**
+ * Internal class representing a pipe to a destination stream where
+ * errors are proxied.
+ *
+ * @internal
+ */
+class PipeProxyErrors extends Pipe {
+    unpipe() {
+        this.src.removeListener('error', this.proxyErrors);
+        super.unpipe();
+    }
+    constructor(src, dest, opts) {
+        super(src, dest, opts);
+        this.proxyErrors = er => dest.emit('error', er);
+        src.on('error', this.proxyErrors);
+    }
+}
+const isObjectModeOptions = (o) => !!o.objectMode;
+const isEncodingOptions = (o) => !o.objectMode && !!o.encoding && o.encoding !== 'buffer';
+/**
+ * Main export, the Minipass class
+ *
+ * `RType` is the type of data emitted, defaults to Buffer
+ *
+ * `WType` is the type of data to be written, if RType is buffer or string,
+ * then any {@link Minipass.ContiguousData} is allowed.
+ *
+ * `Events` is the set of event handler signatures that this object
+ * will emit, see {@link Minipass.Events}
+ */
+class Minipass extends events_1.EventEmitter {
+    [FLOWING] = false;
+    [PAUSED] = false;
+    [PIPES] = [];
+    [BUFFER] = [];
+    [OBJECTMODE];
+    [ENCODING];
+    [ASYNC];
+    [DECODER];
+    [EOF] = false;
+    [EMITTED_END] = false;
+    [EMITTING_END] = false;
+    [CLOSED] = false;
+    [EMITTED_ERROR] = null;
+    [BUFFERLENGTH] = 0;
+    [DESTROYED] = false;
+    [SIGNAL];
+    [ABORTED] = false;
+    [DATALISTENERS] = 0;
+    [DISCARDED] = false;
+    /**
+     * true if the stream can be written
+     */
+    writable = true;
+    /**
+     * true if the stream can be read
+     */
+    readable = true;
+    /**
+     * If `RType` is Buffer, then options do not need to be provided.
+     * Otherwise, an options object must be provided to specify either
+     * {@link Minipass.SharedOptions.objectMode} or
+     * {@link Minipass.SharedOptions.encoding}, as appropriate.
+     */
+    constructor(...args) {
+        const options = (args[0] ||
+            {});
+        super();
+        if (options.objectMode && typeof options.encoding === 'string') {
+            throw new TypeError('Encoding and objectMode may not be used together');
+        }
+        if (isObjectModeOptions(options)) {
+            this[OBJECTMODE] = true;
+            this[ENCODING] = null;
+        }
+        else if (isEncodingOptions(options)) {
+            this[ENCODING] = options.encoding;
+            this[OBJECTMODE] = false;
+        }
+        else {
+            this[OBJECTMODE] = false;
+            this[ENCODING] = null;
+        }
+        this[ASYNC] = !!options.async;
+        this[DECODER] = this[ENCODING]
+            ? new string_decoder_1.StringDecoder(this[ENCODING])
+            : null;
+        //@ts-ignore - private option for debugging and testing
+        if (options && options.debugExposeBuffer === true) {
+            Object.defineProperty(this, 'buffer', { get: () => this[BUFFER] });
+        }
+        //@ts-ignore - private option for debugging and testing
+        if (options && options.debugExposePipes === true) {
+            Object.defineProperty(this, 'pipes', { get: () => this[PIPES] });
+        }
+        const { signal } = options;
+        if (signal) {
+            this[SIGNAL] = signal;
+            if (signal.aborted) {
+                this[ABORT]();
+            }
+            else {
+                signal.addEventListener('abort', () => this[ABORT]());
+            }
+        }
+    }
+    /**
+     * The amount of data stored in the buffer waiting to be read.
+     *
+     * For Buffer strings, this will be the total byte length.
+     * For string encoding streams, this will be the string character length,
+     * according to JavaScript's `string.length` logic.
+     * For objectMode streams, this is a count of the items waiting to be
+     * emitted.
+     */
+    get bufferLength() {
+        return this[BUFFERLENGTH];
+    }
+    /**
+     * The `BufferEncoding` currently in use, or `null`
+     */
+    get encoding() {
+        return this[ENCODING];
+    }
+    /**
+     * @deprecated - This is a read only property
+     */
+    set encoding(_enc) {
+        throw new Error('Encoding must be set at instantiation time');
+    }
+    /**
+     * @deprecated - Encoding may only be set at instantiation time
+     */
+    setEncoding(_enc) {
+        throw new Error('Encoding must be set at instantiation time');
+    }
+    /**
+     * True if this is an objectMode stream
+     */
+    get objectMode() {
+        return this[OBJECTMODE];
+    }
+    /**
+     * @deprecated - This is a read-only property
+     */
+    set objectMode(_om) {
+        throw new Error('objectMode must be set at instantiation time');
+    }
+    /**
+     * true if this is an async stream
+     */
+    get ['async']() {
+        return this[ASYNC];
+    }
+    /**
+     * Set to true to make this stream async.
+     *
+     * Once set, it cannot be unset, as this would potentially cause incorrect
+     * behavior.  Ie, a sync stream can be made async, but an async stream
+     * cannot be safely made sync.
+     */
+    set ['async'](a) {
+        this[ASYNC] = this[ASYNC] || !!a;
+    }
+    // drop everything and get out of the flow completely
+    [ABORT]() {
+        this[ABORTED] = true;
+        this.emit('abort', this[SIGNAL]?.reason);
+        this.destroy(this[SIGNAL]?.reason);
+    }
+    /**
+     * True if the stream has been aborted.
+     */
+    get aborted() {
+        return this[ABORTED];
+    }
+    /**
+     * No-op setter. Stream aborted status is set via the AbortSignal provided
+     * in the constructor options.
+     */
+    set aborted(_) { }
+    write(chunk, encoding, cb) {
+        if (this[ABORTED])
+            return false;
+        if (this[EOF])
+            throw new Error('write after end');
+        if (this[DESTROYED]) {
+            this.emit('error', Object.assign(new Error('Cannot call write after a stream was destroyed'), { code: 'ERR_STREAM_DESTROYED' }));
+            return true;
+        }
+        if (typeof encoding === 'function') {
+            cb = encoding;
+            encoding = 'utf8';
+        }
+        if (!encoding)
+            encoding = 'utf8';
+        const fn = this[ASYNC] ? defer : nodefer;
+        // convert array buffers and typed array views into buffers
+        // at some point in the future, we may want to do the opposite!
+        // leave strings and buffers as-is
+        // anything is only allowed if in object mode, so throw
+        if (!this[OBJECTMODE] && !Buffer.isBuffer(chunk)) {
+            if (isArrayBufferView(chunk)) {
+                //@ts-ignore - sinful unsafe type changing
+                chunk = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            }
+            else if (isArrayBufferLike(chunk)) {
+                //@ts-ignore - sinful unsafe type changing
+                chunk = Buffer.from(chunk);
+            }
+            else if (typeof chunk !== 'string') {
+                throw new Error('Non-contiguous data written to non-objectMode stream');
+            }
+        }
+        // handle object mode up front, since it's simpler
+        // this yields better performance, fewer checks later.
+        if (this[OBJECTMODE]) {
+            // maybe impossible?
+            /* c8 ignore start */
+            if (this[FLOWING] && this[BUFFERLENGTH] !== 0)
+                this[FLUSH](true);
+            /* c8 ignore stop */
+            if (this[FLOWING])
+                this.emit('data', chunk);
+            else
+                this[BUFFERPUSH](chunk);
+            if (this[BUFFERLENGTH] !== 0)
+                this.emit('readable');
+            if (cb)
+                fn(cb);
+            return this[FLOWING];
+        }
+        // at this point the chunk is a buffer or string
+        // don't buffer it up or send it to the decoder
+        if (!chunk.length) {
+            if (this[BUFFERLENGTH] !== 0)
+                this.emit('readable');
+            if (cb)
+                fn(cb);
+            return this[FLOWING];
+        }
+        // fast-path writing strings of same encoding to a stream with
+        // an empty buffer, skipping the buffer/decoder dance
+        if (typeof chunk === 'string' &&
+            // unless it is a string already ready for us to use
+            !(encoding === this[ENCODING] && !this[DECODER]?.lastNeed)) {
+            //@ts-ignore - sinful unsafe type change
+            chunk = Buffer.from(chunk, encoding);
+        }
+        if (Buffer.isBuffer(chunk) && this[ENCODING]) {
+            //@ts-ignore - sinful unsafe type change
+            chunk = this[DECODER].write(chunk);
+        }
+        // Note: flushing CAN potentially switch us into not-flowing mode
+        if (this[FLOWING] && this[BUFFERLENGTH] !== 0)
+            this[FLUSH](true);
+        if (this[FLOWING])
+            this.emit('data', chunk);
+        else
+            this[BUFFERPUSH](chunk);
+        if (this[BUFFERLENGTH] !== 0)
+            this.emit('readable');
+        if (cb)
+            fn(cb);
+        return this[FLOWING];
+    }
+    /**
+     * Low-level explicit read method.
+     *
+     * In objectMode, the argument is ignored, and one item is returned if
+     * available.
+     *
+     * `n` is the number of bytes (or in the case of encoding streams,
+     * characters) to consume. If `n` is not provided, then the entire buffer
+     * is returned, or `null` is returned if no data is available.
+     *
+     * If `n` is greater that the amount of data in the internal buffer,
+     * then `null` is returned.
+     */
+    read(n) {
+        if (this[DESTROYED])
+            return null;
+        this[DISCARDED] = false;
+        if (this[BUFFERLENGTH] === 0 ||
+            n === 0 ||
+            (n && n > this[BUFFERLENGTH])) {
+            this[MAYBE_EMIT_END]();
+            return null;
+        }
+        if (this[OBJECTMODE])
+            n = null;
+        if (this[BUFFER].length > 1 && !this[OBJECTMODE]) {
+            // not object mode, so if we have an encoding, then RType is string
+            // otherwise, must be Buffer
+            this[BUFFER] = [
+                (this[ENCODING]
+                    ? this[BUFFER].join('')
+                    : Buffer.concat(this[BUFFER], this[BUFFERLENGTH])),
+            ];
+        }
+        const ret = this[READ](n || null, this[BUFFER][0]);
+        this[MAYBE_EMIT_END]();
+        return ret;
+    }
+    [READ](n, chunk) {
+        if (this[OBJECTMODE])
+            this[BUFFERSHIFT]();
+        else {
+            const c = chunk;
+            if (n === c.length || n === null)
+                this[BUFFERSHIFT]();
+            else if (typeof c === 'string') {
+                this[BUFFER][0] = c.slice(n);
+                chunk = c.slice(0, n);
+                this[BUFFERLENGTH] -= n;
+            }
+            else {
+                this[BUFFER][0] = c.subarray(n);
+                chunk = c.subarray(0, n);
+                this[BUFFERLENGTH] -= n;
+            }
+        }
+        this.emit('data', chunk);
+        if (!this[BUFFER].length && !this[EOF])
+            this.emit('drain');
+        return chunk;
+    }
+    end(chunk, encoding, cb) {
+        if (typeof chunk === 'function') {
+            cb = chunk;
+            chunk = undefined;
+        }
+        if (typeof encoding === 'function') {
+            cb = encoding;
+            encoding = 'utf8';
+        }
+        if (chunk !== undefined)
+            this.write(chunk, encoding);
+        if (cb)
+            this.once('end', cb);
+        this[EOF] = true;
+        this.writable = false;
+        // if we haven't written anything, then go ahead and emit,
+        // even if we're not reading.
+        // we'll re-emit if a new 'end' listener is added anyway.
+        // This makes MP more suitable to write-only use cases.
+        if (this[FLOWING] || !this[PAUSED])
+            this[MAYBE_EMIT_END]();
+        return this;
+    }
+    // don't let the internal resume be overwritten
+    [RESUME]() {
+        if (this[DESTROYED])
+            return;
+        if (!this[DATALISTENERS] && !this[PIPES].length) {
+            this[DISCARDED] = true;
+        }
+        this[PAUSED] = false;
+        this[FLOWING] = true;
+        this.emit('resume');
+        if (this[BUFFER].length)
+            this[FLUSH]();
+        else if (this[EOF])
+            this[MAYBE_EMIT_END]();
+        else
+            this.emit('drain');
+    }
+    /**
+     * Resume the stream if it is currently in a paused state
+     *
+     * If called when there are no pipe destinations or `data` event listeners,
+     * this will place the stream in a "discarded" state, where all data will
+     * be thrown away. The discarded state is removed if a pipe destination or
+     * data handler is added, if pause() is called, or if any synchronous or
+     * asynchronous iteration is started.
+     */
+    resume() {
+        return this[RESUME]();
+    }
+    /**
+     * Pause the stream
+     */
+    pause() {
+        this[FLOWING] = false;
+        this[PAUSED] = true;
+        this[DISCARDED] = false;
+    }
+    /**
+     * true if the stream has been forcibly destroyed
+     */
+    get destroyed() {
+        return this[DESTROYED];
+    }
+    /**
+     * true if the stream is currently in a flowing state, meaning that
+     * any writes will be immediately emitted.
+     */
+    get flowing() {
+        return this[FLOWING];
+    }
+    /**
+     * true if the stream is currently in a paused state
+     */
+    get paused() {
+        return this[PAUSED];
+    }
+    [BUFFERPUSH](chunk) {
+        if (this[OBJECTMODE])
+            this[BUFFERLENGTH] += 1;
+        else
+            this[BUFFERLENGTH] += chunk.length;
+        this[BUFFER].push(chunk);
+    }
+    [BUFFERSHIFT]() {
+        if (this[OBJECTMODE])
+            this[BUFFERLENGTH] -= 1;
+        else
+            this[BUFFERLENGTH] -= this[BUFFER][0].length;
+        return this[BUFFER].shift();
+    }
+    [FLUSH](noDrain = false) {
+        do { } while (this[FLUSHCHUNK](this[BUFFERSHIFT]()) &&
+            this[BUFFER].length);
+        if (!noDrain && !this[BUFFER].length && !this[EOF])
+            this.emit('drain');
+    }
+    [FLUSHCHUNK](chunk) {
+        this.emit('data', chunk);
+        return this[FLOWING];
+    }
+    /**
+     * Pipe all data emitted by this stream into the destination provided.
+     *
+     * Triggers the flow of data.
+     */
+    pipe(dest, opts) {
+        if (this[DESTROYED])
+            return dest;
+        this[DISCARDED] = false;
+        const ended = this[EMITTED_END];
+        opts = opts || {};
+        if (dest === proc.stdout || dest === proc.stderr)
+            opts.end = false;
+        else
+            opts.end = opts.end !== false;
+        opts.proxyErrors = !!opts.proxyErrors;
+        // piping an ended stream ends immediately
+        if (ended) {
+            if (opts.end)
+                dest.end();
+        }
+        else {
+            // "as" here just ignores the WType, which pipes don't care about,
+            // since they're only consuming from us, and writing to the dest
+            this[PIPES].push(!opts.proxyErrors
+                ? new Pipe(this, dest, opts)
+                : new PipeProxyErrors(this, dest, opts));
+            if (this[ASYNC])
+                defer(() => this[RESUME]());
+            else
+                this[RESUME]();
+        }
+        return dest;
+    }
+    /**
+     * Fully unhook a piped destination stream.
+     *
+     * If the destination stream was the only consumer of this stream (ie,
+     * there are no other piped destinations or `'data'` event listeners)
+     * then the flow of data will stop until there is another consumer or
+     * {@link Minipass#resume} is explicitly called.
+     */
+    unpipe(dest) {
+        const p = this[PIPES].find(p => p.dest === dest);
+        if (p) {
+            if (this[PIPES].length === 1) {
+                if (this[FLOWING] && this[DATALISTENERS] === 0) {
+                    this[FLOWING] = false;
+                }
+                this[PIPES] = [];
+            }
+            else
+                this[PIPES].splice(this[PIPES].indexOf(p), 1);
+            p.unpipe();
+        }
+    }
+    /**
+     * Alias for {@link Minipass#on}
+     */
+    addListener(ev, handler) {
+        return this.on(ev, handler);
+    }
+    /**
+     * Mostly identical to `EventEmitter.on`, with the following
+     * behavior differences to prevent data loss and unnecessary hangs:
+     *
+     * - Adding a 'data' event handler will trigger the flow of data
+     *
+     * - Adding a 'readable' event handler when there is data waiting to be read
+     *   will cause 'readable' to be emitted immediately.
+     *
+     * - Adding an 'endish' event handler ('end', 'finish', etc.) which has
+     *   already passed will cause the event to be emitted immediately and all
+     *   handlers removed.
+     *
+     * - Adding an 'error' event handler after an error has been emitted will
+     *   cause the event to be re-emitted immediately with the error previously
+     *   raised.
+     */
+    on(ev, handler) {
+        const ret = super.on(ev, handler);
+        if (ev === 'data') {
+            this[DISCARDED] = false;
+            this[DATALISTENERS]++;
+            if (!this[PIPES].length && !this[FLOWING]) {
+                this[RESUME]();
+            }
+        }
+        else if (ev === 'readable' && this[BUFFERLENGTH] !== 0) {
+            super.emit('readable');
+        }
+        else if (isEndish(ev) && this[EMITTED_END]) {
+            super.emit(ev);
+            this.removeAllListeners(ev);
+        }
+        else if (ev === 'error' && this[EMITTED_ERROR]) {
+            const h = handler;
+            if (this[ASYNC])
+                defer(() => h.call(this, this[EMITTED_ERROR]));
+            else
+                h.call(this, this[EMITTED_ERROR]);
+        }
+        return ret;
+    }
+    /**
+     * Alias for {@link Minipass#off}
+     */
+    removeListener(ev, handler) {
+        return this.off(ev, handler);
+    }
+    /**
+     * Mostly identical to `EventEmitter.off`
+     *
+     * If a 'data' event handler is removed, and it was the last consumer
+     * (ie, there are no pipe destinations or other 'data' event listeners),
+     * then the flow of data will stop until there is another consumer or
+     * {@link Minipass#resume} is explicitly called.
+     */
+    off(ev, handler) {
+        const ret = super.off(ev, handler);
+        // if we previously had listeners, and now we don't, and we don't
+        // have any pipes, then stop the flow, unless it's been explicitly
+        // put in a discarded flowing state via stream.resume().
+        if (ev === 'data') {
+            this[DATALISTENERS] = this.listeners('data').length;
+            if (this[DATALISTENERS] === 0 &&
+                !this[DISCARDED] &&
+                !this[PIPES].length) {
+                this[FLOWING] = false;
+            }
+        }
+        return ret;
+    }
+    /**
+     * Mostly identical to `EventEmitter.removeAllListeners`
+     *
+     * If all 'data' event handlers are removed, and they were the last consumer
+     * (ie, there are no pipe destinations), then the flow of data will stop
+     * until there is another consumer or {@link Minipass#resume} is explicitly
+     * called.
+     */
+    removeAllListeners(ev) {
+        const ret = super.removeAllListeners(ev);
+        if (ev === 'data' || ev === undefined) {
+            this[DATALISTENERS] = 0;
+            if (!this[DISCARDED] && !this[PIPES].length) {
+                this[FLOWING] = false;
+            }
+        }
+        return ret;
+    }
+    /**
+     * true if the 'end' event has been emitted
+     */
+    get emittedEnd() {
+        return this[EMITTED_END];
+    }
+    [MAYBE_EMIT_END]() {
+        if (!this[EMITTING_END] &&
+            !this[EMITTED_END] &&
+            !this[DESTROYED] &&
+            this[BUFFER].length === 0 &&
+            this[EOF]) {
+            this[EMITTING_END] = true;
+            this.emit('end');
+            this.emit('prefinish');
+            this.emit('finish');
+            if (this[CLOSED])
+                this.emit('close');
+            this[EMITTING_END] = false;
+        }
+    }
+    /**
+     * Mostly identical to `EventEmitter.emit`, with the following
+     * behavior differences to prevent data loss and unnecessary hangs:
+     *
+     * If the stream has been destroyed, and the event is something other
+     * than 'close' or 'error', then `false` is returned and no handlers
+     * are called.
+     *
+     * If the event is 'end', and has already been emitted, then the event
+     * is ignored. If the stream is in a paused or non-flowing state, then
+     * the event will be deferred until data flow resumes. If the stream is
+     * async, then handlers will be called on the next tick rather than
+     * immediately.
+     *
+     * If the event is 'close', and 'end' has not yet been emitted, then
+     * the event will be deferred until after 'end' is emitted.
+     *
+     * If the event is 'error', and an AbortSignal was provided for the stream,
+     * and there are no listeners, then the event is ignored, matching the
+     * behavior of node core streams in the presense of an AbortSignal.
+     *
+     * If the event is 'finish' or 'prefinish', then all listeners will be
+     * removed after emitting the event, to prevent double-firing.
+     */
+    emit(ev, ...args) {
+        const data = args[0];
+        // error and close are only events allowed after calling destroy()
+        if (ev !== 'error' &&
+            ev !== 'close' &&
+            ev !== DESTROYED &&
+            this[DESTROYED]) {
+            return false;
+        }
+        else if (ev === 'data') {
+            return !this[OBJECTMODE] && !data
+                ? false
+                : this[ASYNC]
+                    ? (defer(() => this[EMITDATA](data)), true)
+                    : this[EMITDATA](data);
+        }
+        else if (ev === 'end') {
+            return this[EMITEND]();
+        }
+        else if (ev === 'close') {
+            this[CLOSED] = true;
+            // don't emit close before 'end' and 'finish'
+            if (!this[EMITTED_END] && !this[DESTROYED])
+                return false;
+            const ret = super.emit('close');
+            this.removeAllListeners('close');
+            return ret;
+        }
+        else if (ev === 'error') {
+            this[EMITTED_ERROR] = data;
+            super.emit(ERROR, data);
+            const ret = !this[SIGNAL] || this.listeners('error').length
+                ? super.emit('error', data)
+                : false;
+            this[MAYBE_EMIT_END]();
+            return ret;
+        }
+        else if (ev === 'resume') {
+            const ret = super.emit('resume');
+            this[MAYBE_EMIT_END]();
+            return ret;
+        }
+        else if (ev === 'finish' || ev === 'prefinish') {
+            const ret = super.emit(ev);
+            this.removeAllListeners(ev);
+            return ret;
+        }
+        // Some other unknown event
+        const ret = super.emit(ev, ...args);
+        this[MAYBE_EMIT_END]();
+        return ret;
+    }
+    [EMITDATA](data) {
+        for (const p of this[PIPES]) {
+            if (p.dest.write(data) === false)
+                this.pause();
+        }
+        const ret = this[DISCARDED] ? false : super.emit('data', data);
+        this[MAYBE_EMIT_END]();
+        return ret;
+    }
+    [EMITEND]() {
+        if (this[EMITTED_END])
+            return false;
+        this[EMITTED_END] = true;
+        this.readable = false;
+        return this[ASYNC]
+            ? (defer(() => this[EMITEND2]()), true)
+            : this[EMITEND2]();
+    }
+    [EMITEND2]() {
+        if (this[DECODER]) {
+            const data = this[DECODER].end();
+            if (data) {
+                for (const p of this[PIPES]) {
+                    p.dest.write(data);
+                }
+                if (!this[DISCARDED])
+                    super.emit('data', data);
+            }
+        }
+        for (const p of this[PIPES]) {
+            p.end();
+        }
+        const ret = super.emit('end');
+        this.removeAllListeners('end');
+        return ret;
+    }
+    /**
+     * Return a Promise that resolves to an array of all emitted data once
+     * the stream ends.
+     */
+    async collect() {
+        const buf = Object.assign([], {
+            dataLength: 0,
+        });
+        if (!this[OBJECTMODE])
+            buf.dataLength = 0;
+        // set the promise first, in case an error is raised
+        // by triggering the flow here.
+        const p = this.promise();
+        this.on('data', c => {
+            buf.push(c);
+            if (!this[OBJECTMODE])
+                buf.dataLength += c.length;
+        });
+        await p;
+        return buf;
+    }
+    /**
+     * Return a Promise that resolves to the concatenation of all emitted data
+     * once the stream ends.
+     *
+     * Not allowed on objectMode streams.
+     */
+    async concat() {
+        if (this[OBJECTMODE]) {
+            throw new Error('cannot concat in objectMode');
+        }
+        const buf = await this.collect();
+        return (this[ENCODING]
+            ? buf.join('')
+            : Buffer.concat(buf, buf.dataLength));
+    }
+    /**
+     * Return a void Promise that resolves once the stream ends.
+     */
+    async promise() {
+        return new Promise((resolve, reject) => {
+            this.on(DESTROYED, () => reject(new Error('stream destroyed')));
+            this.on('error', er => reject(er));
+            this.on('end', () => resolve());
+        });
+    }
+    /**
+     * Asynchronous `for await of` iteration.
+     *
+     * This will continue emitting all chunks until the stream terminates.
+     */
+    [Symbol.asyncIterator]() {
+        // set this up front, in case the consumer doesn't call next()
+        // right away.
+        this[DISCARDED] = false;
+        let stopped = false;
+        const stop = async () => {
+            this.pause();
+            stopped = true;
+            return { value: undefined, done: true };
+        };
+        const next = () => {
+            if (stopped)
+                return stop();
+            const res = this.read();
+            if (res !== null)
+                return Promise.resolve({ done: false, value: res });
+            if (this[EOF])
+                return stop();
+            let resolve;
+            let reject;
+            const onerr = (er) => {
+                this.off('data', ondata);
+                this.off('end', onend);
+                this.off(DESTROYED, ondestroy);
+                stop();
+                reject(er);
+            };
+            const ondata = (value) => {
+                this.off('error', onerr);
+                this.off('end', onend);
+                this.off(DESTROYED, ondestroy);
+                this.pause();
+                resolve({ value, done: !!this[EOF] });
+            };
+            const onend = () => {
+                this.off('error', onerr);
+                this.off('data', ondata);
+                this.off(DESTROYED, ondestroy);
+                stop();
+                resolve({ done: true, value: undefined });
+            };
+            const ondestroy = () => onerr(new Error('stream destroyed'));
+            return new Promise((res, rej) => {
+                reject = rej;
+                resolve = res;
+                this.once(DESTROYED, ondestroy);
+                this.once('error', onerr);
+                this.once('end', onend);
+                this.once('data', ondata);
+            });
+        };
+        return {
+            next,
+            throw: stop,
+            return: stop,
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        };
+    }
+    /**
+     * Synchronous `for of` iteration.
+     *
+     * The iteration will terminate when the internal buffer runs out, even
+     * if the stream has not yet terminated.
+     */
+    [Symbol.iterator]() {
+        // set this up front, in case the consumer doesn't call next()
+        // right away.
+        this[DISCARDED] = false;
+        let stopped = false;
+        const stop = () => {
+            this.pause();
+            this.off(ERROR, stop);
+            this.off(DESTROYED, stop);
+            this.off('end', stop);
+            stopped = true;
+            return { done: true, value: undefined };
+        };
+        const next = () => {
+            if (stopped)
+                return stop();
+            const value = this.read();
+            return value === null ? stop() : { done: false, value };
+        };
+        this.once('end', stop);
+        this.once(ERROR, stop);
+        this.once(DESTROYED, stop);
+        return {
+            next,
+            throw: stop,
+            return: stop,
+            [Symbol.iterator]() {
+                return this;
+            },
+        };
+    }
+    /**
+     * Destroy a stream, preventing it from being used for any further purpose.
+     *
+     * If the stream has a `close()` method, then it will be called on
+     * destruction.
+     *
+     * After destruction, any attempt to write data, read data, or emit most
+     * events will be ignored.
+     *
+     * If an error argument is provided, then it will be emitted in an
+     * 'error' event.
+     */
+    destroy(er) {
+        if (this[DESTROYED]) {
+            if (er)
+                this.emit('error', er);
+            else
+                this.emit(DESTROYED);
+            return this;
+        }
+        this[DESTROYED] = true;
+        this[DISCARDED] = true;
+        // throw away all buffered data, it's never coming out
+        this[BUFFER].length = 0;
+        this[BUFFERLENGTH] = 0;
+        const wc = this;
+        if (typeof wc.close === 'function' && !this[CLOSED])
+            wc.close();
+        if (er)
+            this.emit('error', er);
+        // if no error to emit, still reject pending promises
+        else
+            this.emit(DESTROYED);
+        return this;
+    }
+    /**
+     * Alias for {@link isStream}
+     *
+     * Former export location, maintained for backwards compatibility.
+     *
+     * @deprecated
+     */
+    static get isStream() {
+        return exports.isStream;
+    }
+}
+exports.Minipass = Minipass;
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ 5472:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.defaultTmpSync = exports.defaultTmp = void 0;
+// The default temporary folder location for use in the windows algorithm.
+// It's TEMPting to use dirname(path), since that's guaranteed to be on the
+// same device.  However, this means that:
+// rimraf(path).then(() => rimraf(dirname(path)))
+// will often fail with EBUSY, because the parent dir contains
+// marked-for-deletion directory entries (which do not show up in readdir).
+// The approach here is to use os.tmpdir() if it's on the same drive letter,
+// or resolve(path, '\\temp') if it exists, or the root of the drive if not.
+// On Posix (not that you'd be likely to use the windows algorithm there),
+// it uses os.tmpdir() always.
+const os_1 = __nccwpck_require__(2037);
+const path_1 = __nccwpck_require__(1017);
+const fs_js_1 = __nccwpck_require__(3444);
+const platform_js_1 = __importDefault(__nccwpck_require__(786));
+const { stat } = fs_js_1.promises;
+const isDirSync = (path) => {
+    try {
+        return (0, fs_js_1.statSync)(path).isDirectory();
+    }
+    catch (er) {
+        return false;
+    }
+};
+const isDir = (path) => stat(path).then(st => st.isDirectory(), () => false);
+const win32DefaultTmp = async (path) => {
+    const { root } = (0, path_1.parse)(path);
+    const tmp = (0, os_1.tmpdir)();
+    const { root: tmpRoot } = (0, path_1.parse)(tmp);
+    if (root.toLowerCase() === tmpRoot.toLowerCase()) {
+        return tmp;
+    }
+    const driveTmp = (0, path_1.resolve)(root, '/temp');
+    if (await isDir(driveTmp)) {
+        return driveTmp;
+    }
+    return root;
+};
+const win32DefaultTmpSync = (path) => {
+    const { root } = (0, path_1.parse)(path);
+    const tmp = (0, os_1.tmpdir)();
+    const { root: tmpRoot } = (0, path_1.parse)(tmp);
+    if (root.toLowerCase() === tmpRoot.toLowerCase()) {
+        return tmp;
+    }
+    const driveTmp = (0, path_1.resolve)(root, '/temp');
+    if (isDirSync(driveTmp)) {
+        return driveTmp;
+    }
+    return root;
+};
+const posixDefaultTmp = async () => (0, os_1.tmpdir)();
+const posixDefaultTmpSync = () => (0, os_1.tmpdir)();
+exports.defaultTmp = platform_js_1.default === 'win32' ? win32DefaultTmp : posixDefaultTmp;
+exports.defaultTmpSync = platform_js_1.default === 'win32' ? win32DefaultTmpSync : posixDefaultTmpSync;
+//# sourceMappingURL=default-tmp.js.map
+
+/***/ }),
+
+/***/ 7134:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.fixEPERMSync = exports.fixEPERM = void 0;
+const fs_js_1 = __nccwpck_require__(3444);
+const { chmod } = fs_js_1.promises;
+const fixEPERM = (fn) => async (path) => {
+    try {
+        return await fn(path);
+    }
+    catch (er) {
+        const fer = er;
+        if (fer?.code === 'ENOENT') {
+            return;
+        }
+        if (fer?.code === 'EPERM') {
+            try {
+                await chmod(path, 0o666);
+            }
+            catch (er2) {
+                const fer2 = er2;
+                if (fer2?.code === 'ENOENT') {
+                    return;
+                }
+                throw er;
+            }
+            return await fn(path);
+        }
+        throw er;
+    }
+};
+exports.fixEPERM = fixEPERM;
+const fixEPERMSync = (fn) => (path) => {
+    try {
+        return fn(path);
+    }
+    catch (er) {
+        const fer = er;
+        if (fer?.code === 'ENOENT') {
+            return;
+        }
+        if (fer?.code === 'EPERM') {
+            try {
+                (0, fs_js_1.chmodSync)(path, 0o666);
+            }
+            catch (er2) {
+                const fer2 = er2;
+                if (fer2?.code === 'ENOENT') {
+                    return;
+                }
+                throw er;
+            }
+            return fn(path);
+        }
+        throw er;
+    }
+};
+exports.fixEPERMSync = fixEPERMSync;
+//# sourceMappingURL=fix-eperm.js.map
+
+/***/ }),
+
+/***/ 3444:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+// promisify ourselves, because older nodes don't have fs.promises
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.promises = exports.readdirSync = exports.unlinkSync = exports.lstatSync = exports.statSync = exports.rmSync = exports.rmdirSync = exports.renameSync = exports.mkdirSync = exports.chmodSync = void 0;
+const fs_1 = __importDefault(__nccwpck_require__(7147));
+// sync ones just take the sync version from node
+var fs_2 = __nccwpck_require__(7147);
+Object.defineProperty(exports, "chmodSync", ({ enumerable: true, get: function () { return fs_2.chmodSync; } }));
+Object.defineProperty(exports, "mkdirSync", ({ enumerable: true, get: function () { return fs_2.mkdirSync; } }));
+Object.defineProperty(exports, "renameSync", ({ enumerable: true, get: function () { return fs_2.renameSync; } }));
+Object.defineProperty(exports, "rmdirSync", ({ enumerable: true, get: function () { return fs_2.rmdirSync; } }));
+Object.defineProperty(exports, "rmSync", ({ enumerable: true, get: function () { return fs_2.rmSync; } }));
+Object.defineProperty(exports, "statSync", ({ enumerable: true, get: function () { return fs_2.statSync; } }));
+Object.defineProperty(exports, "lstatSync", ({ enumerable: true, get: function () { return fs_2.lstatSync; } }));
+Object.defineProperty(exports, "unlinkSync", ({ enumerable: true, get: function () { return fs_2.unlinkSync; } }));
+const fs_3 = __nccwpck_require__(7147);
+const readdirSync = (path) => (0, fs_3.readdirSync)(path, { withFileTypes: true });
+exports.readdirSync = readdirSync;
+// unrolled for better inlining, this seems to get better performance
+// than something like:
+// const makeCb = (res, rej) => (er, ...d) => er ? rej(er) : res(...d)
+// which would be a bit cleaner.
+const chmod = (path, mode) => new Promise((res, rej) => fs_1.default.chmod(path, mode, (er, ...d) => (er ? rej(er) : res(...d))));
+const mkdir = (path, options) => new Promise((res, rej) => fs_1.default.mkdir(path, options, (er, made) => (er ? rej(er) : res(made))));
+const readdir = (path) => new Promise((res, rej) => fs_1.default.readdir(path, { withFileTypes: true }, (er, data) => er ? rej(er) : res(data)));
+const rename = (oldPath, newPath) => new Promise((res, rej) => fs_1.default.rename(oldPath, newPath, (er, ...d) => (er ? rej(er) : res(...d))));
+const rm = (path, options) => new Promise((res, rej) => fs_1.default.rm(path, options, (er, ...d) => (er ? rej(er) : res(...d))));
+const rmdir = (path) => new Promise((res, rej) => fs_1.default.rmdir(path, (er, ...d) => (er ? rej(er) : res(...d))));
+const stat = (path) => new Promise((res, rej) => fs_1.default.stat(path, (er, data) => (er ? rej(er) : res(data))));
+const lstat = (path) => new Promise((res, rej) => fs_1.default.lstat(path, (er, data) => (er ? rej(er) : res(data))));
+const unlink = (path) => new Promise((res, rej) => fs_1.default.unlink(path, (er, ...d) => (er ? rej(er) : res(...d))));
+exports.promises = {
+    chmod,
+    mkdir,
+    readdir,
+    rename,
+    rm,
+    rmdir,
+    stat,
+    lstat,
+    unlink,
+};
+//# sourceMappingURL=fs.js.map
+
+/***/ }),
+
+/***/ 471:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ignoreENOENTSync = exports.ignoreENOENT = void 0;
+const ignoreENOENT = async (p) => p.catch(er => {
+    if (er.code !== 'ENOENT') {
+        throw er;
+    }
+});
+exports.ignoreENOENT = ignoreENOENT;
+const ignoreENOENTSync = (fn) => {
+    try {
+        return fn();
+    }
+    catch (er) {
+        if (er?.code !== 'ENOENT') {
+            throw er;
+        }
+    }
+};
+exports.ignoreENOENTSync = ignoreENOENTSync;
+//# sourceMappingURL=ignore-enoent.js.map
+
+/***/ }),
+
+/***/ 9633:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rimraf = exports.sync = exports.rimrafSync = exports.moveRemove = exports.moveRemoveSync = exports.posix = exports.posixSync = exports.windows = exports.windowsSync = exports.manual = exports.manualSync = exports.native = exports.nativeSync = exports.isRimrafOptions = exports.assertRimrafOptions = void 0;
+const glob_1 = __nccwpck_require__(3006);
+const opt_arg_js_1 = __nccwpck_require__(6256);
+const path_arg_js_1 = __importDefault(__nccwpck_require__(8548));
+const rimraf_manual_js_1 = __nccwpck_require__(6127);
+const rimraf_move_remove_js_1 = __nccwpck_require__(4140);
+const rimraf_native_js_1 = __nccwpck_require__(5130);
+const rimraf_posix_js_1 = __nccwpck_require__(8355);
+const rimraf_windows_js_1 = __nccwpck_require__(5938);
+const use_native_js_1 = __nccwpck_require__(5384);
+var opt_arg_js_2 = __nccwpck_require__(6256);
+Object.defineProperty(exports, "assertRimrafOptions", ({ enumerable: true, get: function () { return opt_arg_js_2.assertRimrafOptions; } }));
+Object.defineProperty(exports, "isRimrafOptions", ({ enumerable: true, get: function () { return opt_arg_js_2.isRimrafOptions; } }));
+const wrap = (fn) => async (path, opt) => {
+    const options = (0, opt_arg_js_1.optArg)(opt);
+    if (options.glob) {
+        path = await (0, glob_1.glob)(path, options.glob);
+    }
+    if (Array.isArray(path)) {
+        return !!(await Promise.all(path.map(p => fn((0, path_arg_js_1.default)(p, options), options)))).reduce((a, b) => a && b, true);
+    }
+    else {
+        return !!(await fn((0, path_arg_js_1.default)(path, options), options));
+    }
+};
+const wrapSync = (fn) => (path, opt) => {
+    const options = (0, opt_arg_js_1.optArgSync)(opt);
+    if (options.glob) {
+        path = (0, glob_1.globSync)(path, options.glob);
+    }
+    if (Array.isArray(path)) {
+        return !!path
+            .map(p => fn((0, path_arg_js_1.default)(p, options), options))
+            .reduce((a, b) => a && b, true);
+    }
+    else {
+        return !!fn((0, path_arg_js_1.default)(path, options), options);
+    }
+};
+exports.nativeSync = wrapSync(rimraf_native_js_1.rimrafNativeSync);
+exports.native = Object.assign(wrap(rimraf_native_js_1.rimrafNative), { sync: exports.nativeSync });
+exports.manualSync = wrapSync(rimraf_manual_js_1.rimrafManualSync);
+exports.manual = Object.assign(wrap(rimraf_manual_js_1.rimrafManual), { sync: exports.manualSync });
+exports.windowsSync = wrapSync(rimraf_windows_js_1.rimrafWindowsSync);
+exports.windows = Object.assign(wrap(rimraf_windows_js_1.rimrafWindows), { sync: exports.windowsSync });
+exports.posixSync = wrapSync(rimraf_posix_js_1.rimrafPosixSync);
+exports.posix = Object.assign(wrap(rimraf_posix_js_1.rimrafPosix), { sync: exports.posixSync });
+exports.moveRemoveSync = wrapSync(rimraf_move_remove_js_1.rimrafMoveRemoveSync);
+exports.moveRemove = Object.assign(wrap(rimraf_move_remove_js_1.rimrafMoveRemove), {
+    sync: exports.moveRemoveSync,
+});
+exports.rimrafSync = wrapSync((path, opt) => (0, use_native_js_1.useNativeSync)(opt) ? (0, rimraf_native_js_1.rimrafNativeSync)(path, opt) : (0, rimraf_manual_js_1.rimrafManualSync)(path, opt));
+exports.sync = exports.rimrafSync;
+const rimraf_ = wrap((path, opt) => (0, use_native_js_1.useNative)(opt) ? (0, rimraf_native_js_1.rimrafNative)(path, opt) : (0, rimraf_manual_js_1.rimrafManual)(path, opt));
+exports.rimraf = Object.assign(rimraf_, {
+    rimraf: rimraf_,
+    sync: exports.rimrafSync,
+    rimrafSync: exports.rimrafSync,
+    manual: exports.manual,
+    manualSync: exports.manualSync,
+    native: exports.native,
+    nativeSync: exports.nativeSync,
+    posix: exports.posix,
+    posixSync: exports.posixSync,
+    windows: exports.windows,
+    windowsSync: exports.windowsSync,
+    moveRemove: exports.moveRemove,
+    moveRemoveSync: exports.moveRemoveSync,
+});
+exports.rimraf.rimraf = exports.rimraf;
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ 6256:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.optArgSync = exports.optArg = exports.assertRimrafOptions = exports.isRimrafOptions = void 0;
+const typeOrUndef = (val, t) => typeof val === 'undefined' || typeof val === t;
+const isRimrafOptions = (o) => !!o &&
+    typeof o === 'object' &&
+    typeOrUndef(o.preserveRoot, 'boolean') &&
+    typeOrUndef(o.tmp, 'string') &&
+    typeOrUndef(o.maxRetries, 'number') &&
+    typeOrUndef(o.retryDelay, 'number') &&
+    typeOrUndef(o.backoff, 'number') &&
+    typeOrUndef(o.maxBackoff, 'number') &&
+    (typeOrUndef(o.glob, 'boolean') || (o.glob && typeof o.glob === 'object')) &&
+    typeOrUndef(o.filter, 'function');
+exports.isRimrafOptions = isRimrafOptions;
+const assertRimrafOptions = (o) => {
+    if (!(0, exports.isRimrafOptions)(o)) {
+        throw new Error('invalid rimraf options');
+    }
+};
+exports.assertRimrafOptions = assertRimrafOptions;
+const optArgT = (opt) => {
+    (0, exports.assertRimrafOptions)(opt);
+    const { glob, ...options } = opt;
+    if (!glob) {
+        return options;
+    }
+    const globOpt = glob === true
+        ? opt.signal
+            ? { signal: opt.signal }
+            : {}
+        : opt.signal
+            ? {
+                signal: opt.signal,
+                ...glob,
+            }
+            : glob;
+    return {
+        ...options,
+        glob: {
+            ...globOpt,
+            // always get absolute paths from glob, to ensure
+            // that we are referencing the correct thing.
+            absolute: true,
+            withFileTypes: false,
+        },
+    };
+};
+const optArg = (opt = {}) => optArgT(opt);
+exports.optArg = optArg;
+const optArgSync = (opt = {}) => optArgT(opt);
+exports.optArgSync = optArgSync;
+//# sourceMappingURL=opt-arg.js.map
+
+/***/ }),
+
+/***/ 8548:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const path_1 = __nccwpck_require__(1017);
+const util_1 = __nccwpck_require__(3837);
+const platform_js_1 = __importDefault(__nccwpck_require__(786));
+const pathArg = (path, opt = {}) => {
+    const type = typeof path;
+    if (type !== 'string') {
+        const ctor = path && type === 'object' && path.constructor;
+        const received = ctor && ctor.name
+            ? `an instance of ${ctor.name}`
+            : type === 'object'
+                ? (0, util_1.inspect)(path)
+                : `type ${type} ${path}`;
+        const msg = 'The "path" argument must be of type string. ' + `Received ${received}`;
+        throw Object.assign(new TypeError(msg), {
+            path,
+            code: 'ERR_INVALID_ARG_TYPE',
+        });
+    }
+    if (/\0/.test(path)) {
+        // simulate same failure that node raises
+        const msg = 'path must be a string without null bytes';
+        throw Object.assign(new TypeError(msg), {
+            path,
+            code: 'ERR_INVALID_ARG_VALUE',
+        });
+    }
+    path = (0, path_1.resolve)(path);
+    const { root } = (0, path_1.parse)(path);
+    if (path === root && opt.preserveRoot !== false) {
+        const msg = 'refusing to remove root directory without preserveRoot:false';
+        throw Object.assign(new Error(msg), {
+            path,
+            code: 'ERR_PRESERVE_ROOT',
+        });
+    }
+    if (platform_js_1.default === 'win32') {
+        const badWinChars = /[*|"<>?:]/;
+        const { root } = (0, path_1.parse)(path);
+        if (badWinChars.test(path.substring(root.length))) {
+            throw Object.assign(new Error('Illegal characters in path.'), {
+                path,
+                code: 'EINVAL',
+            });
+        }
+    }
+    return path;
+};
+exports["default"] = pathArg;
+//# sourceMappingURL=path-arg.js.map
+
+/***/ }),
+
+/***/ 786:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports["default"] = process.env.__TESTING_RIMRAF_PLATFORM__ || process.platform;
+//# sourceMappingURL=platform.js.map
+
+/***/ }),
+
+/***/ 4943:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.readdirOrErrorSync = exports.readdirOrError = void 0;
+// returns an array of entries if readdir() works,
+// or the error that readdir() raised if not.
+const fs_js_1 = __nccwpck_require__(3444);
+const { readdir } = fs_js_1.promises;
+const readdirOrError = (path) => readdir(path).catch(er => er);
+exports.readdirOrError = readdirOrError;
+const readdirOrErrorSync = (path) => {
+    try {
+        return (0, fs_js_1.readdirSync)(path);
+    }
+    catch (er) {
+        return er;
+    }
+};
+exports.readdirOrErrorSync = readdirOrErrorSync;
+//# sourceMappingURL=readdir-or-error.js.map
+
+/***/ }),
+
+/***/ 6069:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+// note: max backoff is the maximum that any *single* backoff will do
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.retryBusySync = exports.retryBusy = exports.codes = exports.MAXRETRIES = exports.RATE = exports.MAXBACKOFF = void 0;
+exports.MAXBACKOFF = 200;
+exports.RATE = 1.2;
+exports.MAXRETRIES = 10;
+exports.codes = new Set(['EMFILE', 'ENFILE', 'EBUSY']);
+const retryBusy = (fn) => {
+    const method = async (path, opt, backoff = 1, total = 0) => {
+        const mbo = opt.maxBackoff || exports.MAXBACKOFF;
+        const rate = opt.backoff || exports.RATE;
+        const max = opt.maxRetries || exports.MAXRETRIES;
+        let retries = 0;
+        while (true) {
+            try {
+                return await fn(path);
+            }
+            catch (er) {
+                const fer = er;
+                if (fer?.path === path && fer?.code && exports.codes.has(fer.code)) {
+                    backoff = Math.ceil(backoff * rate);
+                    total = backoff + total;
+                    if (total < mbo) {
+                        return new Promise((res, rej) => {
+                            setTimeout(() => {
+                                method(path, opt, backoff, total).then(res, rej);
+                            }, backoff);
+                        });
+                    }
+                    if (retries < max) {
+                        retries++;
+                        continue;
+                    }
+                }
+                throw er;
+            }
+        }
+    };
+    return method;
+};
+exports.retryBusy = retryBusy;
+// just retries, no async so no backoff
+const retryBusySync = (fn) => {
+    const method = (path, opt) => {
+        const max = opt.maxRetries || exports.MAXRETRIES;
+        let retries = 0;
+        while (true) {
+            try {
+                return fn(path);
+            }
+            catch (er) {
+                const fer = er;
+                if (fer?.path === path &&
+                    fer?.code &&
+                    exports.codes.has(fer.code) &&
+                    retries < max) {
+                    retries++;
+                    continue;
+                }
+                throw er;
+            }
+        }
+    };
+    return method;
+};
+exports.retryBusySync = retryBusySync;
+//# sourceMappingURL=retry-busy.js.map
+
+/***/ }),
+
+/***/ 6127:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rimrafManualSync = exports.rimrafManual = void 0;
+const platform_js_1 = __importDefault(__nccwpck_require__(786));
+const rimraf_posix_js_1 = __nccwpck_require__(8355);
+const rimraf_windows_js_1 = __nccwpck_require__(5938);
+exports.rimrafManual = platform_js_1.default === 'win32' ? rimraf_windows_js_1.rimrafWindows : rimraf_posix_js_1.rimrafPosix;
+exports.rimrafManualSync = platform_js_1.default === 'win32' ? rimraf_windows_js_1.rimrafWindowsSync : rimraf_posix_js_1.rimrafPosixSync;
+//# sourceMappingURL=rimraf-manual.js.map
+
+/***/ }),
+
+/***/ 4140:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// https://youtu.be/uhRWMGBjlO8?t=537
+//
+// 1. readdir
+// 2. for each entry
+//   a. if a non-empty directory, recurse
+//   b. if an empty directory, move to random hidden file name in $TEMP
+//   c. unlink/rmdir $TEMP
+//
+// This works around the fact that unlink/rmdir is non-atomic and takes
+// a non-deterministic amount of time to complete.
+//
+// However, it is HELLA SLOW, like 2-10x slower than a naive recursive rm.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rimrafMoveRemoveSync = exports.rimrafMoveRemove = void 0;
+const path_1 = __nccwpck_require__(1017);
+const default_tmp_js_1 = __nccwpck_require__(5472);
+const ignore_enoent_js_1 = __nccwpck_require__(471);
+const fs_js_1 = __nccwpck_require__(3444);
+const { lstat, rename, unlink, rmdir, chmod } = fs_js_1.promises;
+const readdir_or_error_js_1 = __nccwpck_require__(4943);
+// crypto.randomBytes is much slower, and Math.random() is enough here
+const uniqueFilename = (path) => `.${(0, path_1.basename)(path)}.${Math.random()}`;
+const unlinkFixEPERM = async (path) => unlink(path).catch((er) => {
+    if (er.code === 'EPERM') {
+        return chmod(path, 0o666).then(() => unlink(path), er2 => {
+            if (er2.code === 'ENOENT') {
+                return;
+            }
+            throw er;
+        });
+    }
+    else if (er.code === 'ENOENT') {
+        return;
+    }
+    throw er;
+});
+const unlinkFixEPERMSync = (path) => {
+    try {
+        (0, fs_js_1.unlinkSync)(path);
+    }
+    catch (er) {
+        if (er?.code === 'EPERM') {
+            try {
+                return (0, fs_js_1.chmodSync)(path, 0o666);
+            }
+            catch (er2) {
+                if (er2?.code === 'ENOENT') {
+                    return;
+                }
+                throw er;
+            }
+        }
+        else if (er?.code === 'ENOENT') {
+            return;
+        }
+        throw er;
+    }
+};
+const rimrafMoveRemove = async (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return await rimrafMoveRemoveDir(path, opt, await lstat(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafMoveRemove = rimrafMoveRemove;
+const rimrafMoveRemoveDir = async (path, opt, ent) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    if (!opt.tmp) {
+        return rimrafMoveRemoveDir(path, { ...opt, tmp: await (0, default_tmp_js_1.defaultTmp)(path) }, ent);
+    }
+    if (path === opt.tmp && (0, path_1.parse)(path).root !== path) {
+        throw new Error('cannot delete temp directory used for deletion');
+    }
+    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
+        }
+        /* c8 ignore stop */
+        if (opt.filter && !(await opt.filter(path, ent))) {
+            return false;
+        }
+        await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, unlinkFixEPERM));
+        return true;
+    }
+    const removedAll = (await Promise.all(entries.map(ent => rimrafMoveRemoveDir((0, path_1.resolve)(path, ent.name), opt, ent)))).reduce((a, b) => a && b, true);
+    if (!removedAll) {
+        return false;
+    }
+    // we don't ever ACTUALLY try to unlink /, because that can never work
+    // but when preserveRoot is false, we could be operating on it.
+    // No need to check if preserveRoot is not false.
+    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
+        return false;
+    }
+    if (opt.filter && !(await opt.filter(path, ent))) {
+        return false;
+    }
+    await (0, ignore_enoent_js_1.ignoreENOENT)(tmpUnlink(path, opt.tmp, rmdir));
+    return true;
+};
+const tmpUnlink = async (path, tmp, rm) => {
+    const tmpFile = (0, path_1.resolve)(tmp, uniqueFilename(path));
+    await rename(path, tmpFile);
+    return await rm(tmpFile);
+};
+const rimrafMoveRemoveSync = (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return rimrafMoveRemoveDirSync(path, opt, (0, fs_js_1.lstatSync)(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafMoveRemoveSync = rimrafMoveRemoveSync;
+const rimrafMoveRemoveDirSync = (path, opt, ent) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    if (!opt.tmp) {
+        return rimrafMoveRemoveDirSync(path, { ...opt, tmp: (0, default_tmp_js_1.defaultTmpSync)(path) }, ent);
+    }
+    const tmp = opt.tmp;
+    if (path === opt.tmp && (0, path_1.parse)(path).root !== path) {
+        throw new Error('cannot delete temp directory used for deletion');
+    }
+    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
+        }
+        /* c8 ignore stop */
+        if (opt.filter && !opt.filter(path, ent)) {
+            return false;
+        }
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, unlinkFixEPERMSync));
+        return true;
+    }
+    let removedAll = true;
+    for (const ent of entries) {
+        const p = (0, path_1.resolve)(path, ent.name);
+        removedAll = rimrafMoveRemoveDirSync(p, opt, ent) && removedAll;
+    }
+    if (!removedAll) {
+        return false;
+    }
+    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
+        return false;
+    }
+    if (opt.filter && !opt.filter(path, ent)) {
+        return false;
+    }
+    (0, ignore_enoent_js_1.ignoreENOENTSync)(() => tmpUnlinkSync(path, tmp, fs_js_1.rmdirSync));
+    return true;
+};
+const tmpUnlinkSync = (path, tmp, rmSync) => {
+    const tmpFile = (0, path_1.resolve)(tmp, uniqueFilename(path));
+    (0, fs_js_1.renameSync)(path, tmpFile);
+    return rmSync(tmpFile);
+};
+//# sourceMappingURL=rimraf-move-remove.js.map
+
+/***/ }),
+
+/***/ 5130:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rimrafNativeSync = exports.rimrafNative = void 0;
+const fs_js_1 = __nccwpck_require__(3444);
+const { rm } = fs_js_1.promises;
+const rimrafNative = async (path, opt) => {
+    await rm(path, {
+        ...opt,
+        force: true,
+        recursive: true,
+    });
+    return true;
+};
+exports.rimrafNative = rimrafNative;
+const rimrafNativeSync = (path, opt) => {
+    (0, fs_js_1.rmSync)(path, {
+        ...opt,
+        force: true,
+        recursive: true,
+    });
+    return true;
+};
+exports.rimrafNativeSync = rimrafNativeSync;
+//# sourceMappingURL=rimraf-native.js.map
+
+/***/ }),
+
+/***/ 8355:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// the simple recursive removal, where unlink and rmdir are atomic
+// Note that this approach does NOT work on Windows!
+// We stat first and only unlink if the Dirent isn't a directory,
+// because sunos will let root unlink a directory, and some
+// SUPER weird breakage happens as a result.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rimrafPosixSync = exports.rimrafPosix = void 0;
+const fs_js_1 = __nccwpck_require__(3444);
+const { lstat, rmdir, unlink } = fs_js_1.promises;
+const path_1 = __nccwpck_require__(1017);
+const readdir_or_error_js_1 = __nccwpck_require__(4943);
+const ignore_enoent_js_1 = __nccwpck_require__(471);
+const rimrafPosix = async (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return await rimrafPosixDir(path, opt, await lstat(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafPosix = rimrafPosix;
+const rimrafPosixSync = (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return rimrafPosixDirSync(path, opt, (0, fs_js_1.lstatSync)(path));
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafPosixSync = rimrafPosixSync;
+const rimrafPosixDir = async (path, opt, ent) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
+        }
+        /* c8 ignore stop */
+        if (opt.filter && !(await opt.filter(path, ent))) {
+            return false;
+        }
+        await (0, ignore_enoent_js_1.ignoreENOENT)(unlink(path));
+        return true;
+    }
+    const removedAll = (await Promise.all(entries.map(ent => rimrafPosixDir((0, path_1.resolve)(path, ent.name), opt, ent)))).reduce((a, b) => a && b, true);
+    if (!removedAll) {
+        return false;
+    }
+    // we don't ever ACTUALLY try to unlink /, because that can never work
+    // but when preserveRoot is false, we could be operating on it.
+    // No need to check if preserveRoot is not false.
+    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
+        return false;
+    }
+    if (opt.filter && !(await opt.filter(path, ent))) {
+        return false;
+    }
+    await (0, ignore_enoent_js_1.ignoreENOENT)(rmdir(path));
+    return true;
+};
+const rimrafPosixDirSync = (path, opt, ent) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
+        }
+        /* c8 ignore stop */
+        if (opt.filter && !opt.filter(path, ent)) {
+            return false;
+        }
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.unlinkSync)(path));
+        return true;
+    }
+    let removedAll = true;
+    for (const ent of entries) {
+        const p = (0, path_1.resolve)(path, ent.name);
+        removedAll = rimrafPosixDirSync(p, opt, ent) && removedAll;
+    }
+    if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
+        return false;
+    }
+    if (!removedAll) {
+        return false;
+    }
+    if (opt.filter && !opt.filter(path, ent)) {
+        return false;
+    }
+    (0, ignore_enoent_js_1.ignoreENOENTSync)(() => (0, fs_js_1.rmdirSync)(path));
+    return true;
+};
+//# sourceMappingURL=rimraf-posix.js.map
+
+/***/ }),
+
+/***/ 5938:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// This is the same as rimrafPosix, with the following changes:
+//
+// 1. EBUSY, ENFILE, EMFILE trigger retries and/or exponential backoff
+// 2. All non-directories are removed first and then all directories are
+//    removed in a second sweep.
+// 3. If we hit ENOTEMPTY in the second sweep, fall back to move-remove on
+//    the that folder.
+//
+// Note: "move then remove" is 2-10 times slower, and just as unreliable.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.rimrafWindowsSync = exports.rimrafWindows = void 0;
+const path_1 = __nccwpck_require__(1017);
+const fix_eperm_js_1 = __nccwpck_require__(7134);
+const fs_js_1 = __nccwpck_require__(3444);
+const ignore_enoent_js_1 = __nccwpck_require__(471);
+const readdir_or_error_js_1 = __nccwpck_require__(4943);
+const retry_busy_js_1 = __nccwpck_require__(6069);
+const rimraf_move_remove_js_1 = __nccwpck_require__(4140);
+const { unlink, rmdir, lstat } = fs_js_1.promises;
+const rimrafWindowsFile = (0, retry_busy_js_1.retryBusy)((0, fix_eperm_js_1.fixEPERM)(unlink));
+const rimrafWindowsFileSync = (0, retry_busy_js_1.retryBusySync)((0, fix_eperm_js_1.fixEPERMSync)(fs_js_1.unlinkSync));
+const rimrafWindowsDirRetry = (0, retry_busy_js_1.retryBusy)((0, fix_eperm_js_1.fixEPERM)(rmdir));
+const rimrafWindowsDirRetrySync = (0, retry_busy_js_1.retryBusySync)((0, fix_eperm_js_1.fixEPERMSync)(fs_js_1.rmdirSync));
+const rimrafWindowsDirMoveRemoveFallback = async (path, opt) => {
+    /* c8 ignore start */
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    /* c8 ignore stop */
+    // already filtered, remove from options so we don't call unnecessarily
+    const { filter, ...options } = opt;
+    try {
+        return await rimrafWindowsDirRetry(path, options);
+    }
+    catch (er) {
+        if (er?.code === 'ENOTEMPTY') {
+            return await (0, rimraf_move_remove_js_1.rimrafMoveRemove)(path, options);
+        }
+        throw er;
+    }
+};
+const rimrafWindowsDirMoveRemoveFallbackSync = (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    // already filtered, remove from options so we don't call unnecessarily
+    const { filter, ...options } = opt;
+    try {
+        return rimrafWindowsDirRetrySync(path, options);
+    }
+    catch (er) {
+        const fer = er;
+        if (fer?.code === 'ENOTEMPTY') {
+            return (0, rimraf_move_remove_js_1.rimrafMoveRemoveSync)(path, options);
+        }
+        throw er;
+    }
+};
+const START = Symbol('start');
+const CHILD = Symbol('child');
+const FINISH = Symbol('finish');
+const rimrafWindows = async (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return await rimrafWindowsDir(path, opt, await lstat(path), START);
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafWindows = rimrafWindows;
+const rimrafWindowsSync = (path, opt) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    try {
+        return rimrafWindowsDirSync(path, opt, (0, fs_js_1.lstatSync)(path), START);
+    }
+    catch (er) {
+        if (er?.code === 'ENOENT')
+            return true;
+        throw er;
+    }
+};
+exports.rimrafWindowsSync = rimrafWindowsSync;
+const rimrafWindowsDir = async (path, opt, ent, state = START) => {
+    if (opt?.signal?.aborted) {
+        throw opt.signal.reason;
+    }
+    const entries = ent.isDirectory() ? await (0, readdir_or_error_js_1.readdirOrError)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
+        }
+        /* c8 ignore stop */
+        if (opt.filter && !(await opt.filter(path, ent))) {
+            return false;
+        }
+        // is a file
+        await (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsFile(path, opt));
+        return true;
+    }
+    const s = state === START ? CHILD : state;
+    const removedAll = (await Promise.all(entries.map(ent => rimrafWindowsDir((0, path_1.resolve)(path, ent.name), opt, ent, s)))).reduce((a, b) => a && b, true);
+    if (state === START) {
+        return rimrafWindowsDir(path, opt, ent, FINISH);
+    }
+    else if (state === FINISH) {
+        if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
+            return false;
+        }
+        if (!removedAll) {
+            return false;
+        }
+        if (opt.filter && !(await opt.filter(path, ent))) {
+            return false;
+        }
+        await (0, ignore_enoent_js_1.ignoreENOENT)(rimrafWindowsDirMoveRemoveFallback(path, opt));
+    }
+    return true;
+};
+const rimrafWindowsDirSync = (path, opt, ent, state = START) => {
+    const entries = ent.isDirectory() ? (0, readdir_or_error_js_1.readdirOrErrorSync)(path) : null;
+    if (!Array.isArray(entries)) {
+        // this can only happen if lstat/readdir lied, or if the dir was
+        // swapped out with a file at just the right moment.
+        /* c8 ignore start */
+        if (entries) {
+            if (entries.code === 'ENOENT') {
+                return true;
+            }
+            if (entries.code !== 'ENOTDIR') {
+                throw entries;
+            }
+        }
+        /* c8 ignore stop */
+        if (opt.filter && !opt.filter(path, ent)) {
+            return false;
+        }
+        // is a file
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => rimrafWindowsFileSync(path, opt));
+        return true;
+    }
+    let removedAll = true;
+    for (const ent of entries) {
+        const s = state === START ? CHILD : state;
+        const p = (0, path_1.resolve)(path, ent.name);
+        removedAll = rimrafWindowsDirSync(p, opt, ent, s) && removedAll;
+    }
+    if (state === START) {
+        return rimrafWindowsDirSync(path, opt, ent, FINISH);
+    }
+    else if (state === FINISH) {
+        if (opt.preserveRoot === false && path === (0, path_1.parse)(path).root) {
+            return false;
+        }
+        if (!removedAll) {
+            return false;
+        }
+        if (opt.filter && !opt.filter(path, ent)) {
+            return false;
+        }
+        (0, ignore_enoent_js_1.ignoreENOENTSync)(() => {
+            rimrafWindowsDirMoveRemoveFallbackSync(path, opt);
+        });
+    }
+    return true;
+};
+//# sourceMappingURL=rimraf-windows.js.map
+
+/***/ }),
+
+/***/ 5384:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.useNativeSync = exports.useNative = void 0;
+const platform_js_1 = __importDefault(__nccwpck_require__(786));
+const version = process.env.__TESTING_RIMRAF_NODE_VERSION__ || process.version;
+const versArr = version.replace(/^v/, '').split('.');
+/* c8 ignore start */
+const [major = 0, minor = 0] = versArr.map(v => parseInt(v, 10));
+/* c8 ignore stop */
+const hasNative = major > 14 || (major === 14 && minor >= 14);
+// we do NOT use native by default on Windows, because Node's native
+// rm implementation is less advanced.  Change this code if that changes.
+exports.useNative = !hasNative || platform_js_1.default === 'win32'
+    ? () => false
+    : opt => !opt?.signal && !opt?.filter;
+exports.useNativeSync = !hasNative || platform_js_1.default === 'win32'
+    ? () => false
+    : opt => !opt?.signal && !opt?.filter;
+//# sourceMappingURL=use-native.js.map
+
+/***/ }),
+
+/***/ 1372:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Glob = void 0;
+const minimatch_1 = __nccwpck_require__(3457);
+const path_scurry_1 = __nccwpck_require__(9569);
+const url_1 = __nccwpck_require__(7310);
+const pattern_js_1 = __nccwpck_require__(3986);
+const walker_js_1 = __nccwpck_require__(2909);
+// if no process global, just call it linux.
+// so we default to case-sensitive, / separators
+const defaultPlatform = typeof process === 'object' &&
+    process &&
+    typeof process.platform === 'string'
+    ? process.platform
+    : 'linux';
+/**
+ * An object that can perform glob pattern traversals.
+ */
+class Glob {
+    absolute;
+    cwd;
+    root;
+    dot;
+    dotRelative;
+    follow;
+    ignore;
+    magicalBraces;
+    mark;
+    matchBase;
+    maxDepth;
+    nobrace;
+    nocase;
+    nodir;
+    noext;
+    noglobstar;
+    pattern;
+    platform;
+    realpath;
+    scurry;
+    stat;
+    signal;
+    windowsPathsNoEscape;
+    withFileTypes;
+    /**
+     * The options provided to the constructor.
+     */
+    opts;
+    /**
+     * An array of parsed immutable {@link Pattern} objects.
+     */
+    patterns;
+    /**
+     * All options are stored as properties on the `Glob` object.
+     *
+     * See {@link GlobOptions} for full options descriptions.
+     *
+     * Note that a previous `Glob` object can be passed as the
+     * `GlobOptions` to another `Glob` instantiation to re-use settings
+     * and caches with a new pattern.
+     *
+     * Traversal functions can be called multiple times to run the walk
+     * again.
+     */
+    constructor(pattern, opts) {
+        /* c8 ignore start */
+        if (!opts)
+            throw new TypeError('glob options required');
+        /* c8 ignore stop */
+        this.withFileTypes = !!opts.withFileTypes;
+        this.signal = opts.signal;
+        this.follow = !!opts.follow;
+        this.dot = !!opts.dot;
+        this.dotRelative = !!opts.dotRelative;
+        this.nodir = !!opts.nodir;
+        this.mark = !!opts.mark;
+        if (!opts.cwd) {
+            this.cwd = '';
+        }
+        else if (opts.cwd instanceof URL || opts.cwd.startsWith('file://')) {
+            opts.cwd = (0, url_1.fileURLToPath)(opts.cwd);
+        }
+        this.cwd = opts.cwd || '';
+        this.root = opts.root;
+        this.magicalBraces = !!opts.magicalBraces;
+        this.nobrace = !!opts.nobrace;
+        this.noext = !!opts.noext;
+        this.realpath = !!opts.realpath;
+        this.absolute = opts.absolute;
+        this.noglobstar = !!opts.noglobstar;
+        this.matchBase = !!opts.matchBase;
+        this.maxDepth =
+            typeof opts.maxDepth === 'number' ? opts.maxDepth : Infinity;
+        this.stat = !!opts.stat;
+        this.ignore = opts.ignore;
+        if (this.withFileTypes && this.absolute !== undefined) {
+            throw new Error('cannot set absolute and withFileTypes:true');
+        }
+        if (typeof pattern === 'string') {
+            pattern = [pattern];
+        }
+        this.windowsPathsNoEscape =
+            !!opts.windowsPathsNoEscape ||
+                opts.allowWindowsEscape === false;
+        if (this.windowsPathsNoEscape) {
+            pattern = pattern.map(p => p.replace(/\\/g, '/'));
+        }
+        if (this.matchBase) {
+            if (opts.noglobstar) {
+                throw new TypeError('base matching requires globstar');
+            }
+            pattern = pattern.map(p => (p.includes('/') ? p : `./**/${p}`));
+        }
+        this.pattern = pattern;
+        this.platform = opts.platform || defaultPlatform;
+        this.opts = { ...opts, platform: this.platform };
+        if (opts.scurry) {
+            this.scurry = opts.scurry;
+            if (opts.nocase !== undefined &&
+                opts.nocase !== opts.scurry.nocase) {
+                throw new Error('nocase option contradicts provided scurry option');
+            }
+        }
+        else {
+            const Scurry = opts.platform === 'win32'
+                ? path_scurry_1.PathScurryWin32
+                : opts.platform === 'darwin'
+                    ? path_scurry_1.PathScurryDarwin
+                    : opts.platform
+                        ? path_scurry_1.PathScurryPosix
+                        : path_scurry_1.PathScurry;
+            this.scurry = new Scurry(this.cwd, {
+                nocase: opts.nocase,
+                fs: opts.fs,
+            });
+        }
+        this.nocase = this.scurry.nocase;
+        // If you do nocase:true on a case-sensitive file system, then
+        // we need to use regexps instead of strings for non-magic
+        // path portions, because statting `aBc` won't return results
+        // for the file `AbC` for example.
+        const nocaseMagicOnly = this.platform === 'darwin' || this.platform === 'win32';
+        const mmo = {
+            // default nocase based on platform
+            ...opts,
+            dot: this.dot,
+            matchBase: this.matchBase,
+            nobrace: this.nobrace,
+            nocase: this.nocase,
+            nocaseMagicOnly,
+            nocomment: true,
+            noext: this.noext,
+            nonegate: true,
+            optimizationLevel: 2,
+            platform: this.platform,
+            windowsPathsNoEscape: this.windowsPathsNoEscape,
+            debug: !!this.opts.debug,
+        };
+        const mms = this.pattern.map(p => new minimatch_1.Minimatch(p, mmo));
+        const [matchSet, globParts] = mms.reduce((set, m) => {
+            set[0].push(...m.set);
+            set[1].push(...m.globParts);
+            return set;
+        }, [[], []]);
+        this.patterns = matchSet.map((set, i) => {
+            const g = globParts[i];
+            /* c8 ignore start */
+            if (!g)
+                throw new Error('invalid pattern object');
+            /* c8 ignore stop */
+            return new pattern_js_1.Pattern(set, g, 0, this.platform);
+        });
+    }
+    async walk() {
+        // Walkers always return array of Path objects, so we just have to
+        // coerce them into the right shape.  It will have already called
+        // realpath() if the option was set to do so, so we know that's cached.
+        // start out knowing the cwd, at least
+        return [
+            ...(await new walker_js_1.GlobWalker(this.patterns, this.scurry.cwd, {
+                ...this.opts,
+                maxDepth: this.maxDepth !== Infinity
+                    ? this.maxDepth + this.scurry.cwd.depth()
+                    : Infinity,
+                platform: this.platform,
+                nocase: this.nocase,
+            }).walk()),
+        ];
+    }
+    walkSync() {
+        return [
+            ...new walker_js_1.GlobWalker(this.patterns, this.scurry.cwd, {
+                ...this.opts,
+                maxDepth: this.maxDepth !== Infinity
+                    ? this.maxDepth + this.scurry.cwd.depth()
+                    : Infinity,
+                platform: this.platform,
+                nocase: this.nocase,
+            }).walkSync(),
+        ];
+    }
+    stream() {
+        return new walker_js_1.GlobStream(this.patterns, this.scurry.cwd, {
+            ...this.opts,
+            maxDepth: this.maxDepth !== Infinity
+                ? this.maxDepth + this.scurry.cwd.depth()
+                : Infinity,
+            platform: this.platform,
+            nocase: this.nocase,
+        }).stream();
+    }
+    streamSync() {
+        return new walker_js_1.GlobStream(this.patterns, this.scurry.cwd, {
+            ...this.opts,
+            maxDepth: this.maxDepth !== Infinity
+                ? this.maxDepth + this.scurry.cwd.depth()
+                : Infinity,
+            platform: this.platform,
+            nocase: this.nocase,
+        }).streamSync();
+    }
+    /**
+     * Default sync iteration function. Returns a Generator that
+     * iterates over the results.
+     */
+    iterateSync() {
+        return this.streamSync()[Symbol.iterator]();
+    }
+    [Symbol.iterator]() {
+        return this.iterateSync();
+    }
+    /**
+     * Default async iteration function. Returns an AsyncGenerator that
+     * iterates over the results.
+     */
+    iterate() {
+        return this.stream()[Symbol.asyncIterator]();
+    }
+    [Symbol.asyncIterator]() {
+        return this.iterate();
+    }
+}
+exports.Glob = Glob;
+//# sourceMappingURL=glob.js.map
+
+/***/ }),
+
+/***/ 598:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.hasMagic = void 0;
+const minimatch_1 = __nccwpck_require__(3457);
+/**
+ * Return true if the patterns provided contain any magic glob characters,
+ * given the options provided.
+ *
+ * Brace expansion is not considered "magic" unless the `magicalBraces` option
+ * is set, as brace expansion just turns one string into an array of strings.
+ * So a pattern like `'x{a,b}y'` would return `false`, because `'xay'` and
+ * `'xby'` both do not contain any magic glob characters, and it's treated the
+ * same as if you had called it on `['xay', 'xby']`. When `magicalBraces:true`
+ * is in the options, brace expansion _is_ treated as a pattern having magic.
+ */
+const hasMagic = (pattern, options = {}) => {
+    if (!Array.isArray(pattern)) {
+        pattern = [pattern];
+    }
+    for (const p of pattern) {
+        if (new minimatch_1.Minimatch(p, options).hasMagic())
+            return true;
+    }
+    return false;
+};
+exports.hasMagic = hasMagic;
+//# sourceMappingURL=has-magic.js.map
+
+/***/ }),
+
+/***/ 9550:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// give it a pattern, and it'll be able to tell you if
+// a given path should be ignored.
+// Ignoring a path ignores its children if the pattern ends in /**
+// Ignores are always parsed in dot:true mode
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Ignore = void 0;
+const minimatch_1 = __nccwpck_require__(3457);
+const pattern_js_1 = __nccwpck_require__(3986);
+const defaultPlatform = typeof process === 'object' &&
+    process &&
+    typeof process.platform === 'string'
+    ? process.platform
+    : 'linux';
+/**
+ * Class used to process ignored patterns
+ */
+class Ignore {
+    relative;
+    relativeChildren;
+    absolute;
+    absoluteChildren;
+    constructor(ignored, { nobrace, nocase, noext, noglobstar, platform = defaultPlatform, }) {
+        this.relative = [];
+        this.absolute = [];
+        this.relativeChildren = [];
+        this.absoluteChildren = [];
+        const mmopts = {
+            dot: true,
+            nobrace,
+            nocase,
+            noext,
+            noglobstar,
+            optimizationLevel: 2,
+            platform,
+            nocomment: true,
+            nonegate: true,
+        };
+        // this is a little weird, but it gives us a clean set of optimized
+        // minimatch matchers, without getting tripped up if one of them
+        // ends in /** inside a brace section, and it's only inefficient at
+        // the start of the walk, not along it.
+        // It'd be nice if the Pattern class just had a .test() method, but
+        // handling globstars is a bit of a pita, and that code already lives
+        // in minimatch anyway.
+        // Another way would be if maybe Minimatch could take its set/globParts
+        // as an option, and then we could at least just use Pattern to test
+        // for absolute-ness.
+        // Yet another way, Minimatch could take an array of glob strings, and
+        // a cwd option, and do the right thing.
+        for (const ign of ignored) {
+            const mm = new minimatch_1.Minimatch(ign, mmopts);
+            for (let i = 0; i < mm.set.length; i++) {
+                const parsed = mm.set[i];
+                const globParts = mm.globParts[i];
+                /* c8 ignore start */
+                if (!parsed || !globParts) {
+                    throw new Error('invalid pattern object');
+                }
+                /* c8 ignore stop */
+                const p = new pattern_js_1.Pattern(parsed, globParts, 0, platform);
+                const m = new minimatch_1.Minimatch(p.globString(), mmopts);
+                const children = globParts[globParts.length - 1] === '**';
+                const absolute = p.isAbsolute();
+                if (absolute)
+                    this.absolute.push(m);
+                else
+                    this.relative.push(m);
+                if (children) {
+                    if (absolute)
+                        this.absoluteChildren.push(m);
+                    else
+                        this.relativeChildren.push(m);
+                }
+            }
+        }
+    }
+    ignored(p) {
+        const fullpath = p.fullpath();
+        const fullpaths = `${fullpath}/`;
+        const relative = p.relative() || '.';
+        const relatives = `${relative}/`;
+        for (const m of this.relative) {
+            if (m.match(relative) || m.match(relatives))
+                return true;
+        }
+        for (const m of this.absolute) {
+            if (m.match(fullpath) || m.match(fullpaths))
+                return true;
+        }
+        return false;
+    }
+    childrenIgnored(p) {
+        const fullpath = p.fullpath() + '/';
+        const relative = (p.relative() || '.') + '/';
+        for (const m of this.relativeChildren) {
+            if (m.match(relative))
+                return true;
+        }
+        for (const m of this.absoluteChildren) {
+            if (m.match(fullpath))
+                return true;
+        }
+        return false;
+    }
+}
+exports.Ignore = Ignore;
+//# sourceMappingURL=ignore.js.map
+
+/***/ }),
+
+/***/ 3006:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.glob = exports.hasMagic = exports.Glob = exports.unescape = exports.escape = exports.sync = exports.iterate = exports.iterateSync = exports.stream = exports.streamSync = exports.globIterate = exports.globIterateSync = exports.globSync = exports.globStream = exports.globStreamSync = void 0;
+const minimatch_1 = __nccwpck_require__(3457);
+const glob_js_1 = __nccwpck_require__(1372);
+const has_magic_js_1 = __nccwpck_require__(598);
+function globStreamSync(pattern, options = {}) {
+    return new glob_js_1.Glob(pattern, options).streamSync();
+}
+exports.globStreamSync = globStreamSync;
+function globStream(pattern, options = {}) {
+    return new glob_js_1.Glob(pattern, options).stream();
+}
+exports.globStream = globStream;
+function globSync(pattern, options = {}) {
+    return new glob_js_1.Glob(pattern, options).walkSync();
+}
+exports.globSync = globSync;
+async function glob_(pattern, options = {}) {
+    return new glob_js_1.Glob(pattern, options).walk();
+}
+function globIterateSync(pattern, options = {}) {
+    return new glob_js_1.Glob(pattern, options).iterateSync();
+}
+exports.globIterateSync = globIterateSync;
+function globIterate(pattern, options = {}) {
+    return new glob_js_1.Glob(pattern, options).iterate();
+}
+exports.globIterate = globIterate;
+// aliases: glob.sync.stream() glob.stream.sync() glob.sync() etc
+exports.streamSync = globStreamSync;
+exports.stream = Object.assign(globStream, { sync: globStreamSync });
+exports.iterateSync = globIterateSync;
+exports.iterate = Object.assign(globIterate, {
+    sync: globIterateSync,
+});
+exports.sync = Object.assign(globSync, {
+    stream: globStreamSync,
+    iterate: globIterateSync,
+});
+/* c8 ignore start */
+var minimatch_2 = __nccwpck_require__(3457);
+Object.defineProperty(exports, "escape", ({ enumerable: true, get: function () { return minimatch_2.escape; } }));
+Object.defineProperty(exports, "unescape", ({ enumerable: true, get: function () { return minimatch_2.unescape; } }));
+var glob_js_2 = __nccwpck_require__(1372);
+Object.defineProperty(exports, "Glob", ({ enumerable: true, get: function () { return glob_js_2.Glob; } }));
+var has_magic_js_2 = __nccwpck_require__(598);
+Object.defineProperty(exports, "hasMagic", ({ enumerable: true, get: function () { return has_magic_js_2.hasMagic; } }));
+/* c8 ignore stop */
+exports.glob = Object.assign(glob_, {
+    glob: glob_,
+    globSync,
+    sync: exports.sync,
+    globStream,
+    stream: exports.stream,
+    globStreamSync,
+    streamSync: exports.streamSync,
+    globIterate,
+    iterate: exports.iterate,
+    globIterateSync,
+    iterateSync: exports.iterateSync,
+    Glob: glob_js_1.Glob,
+    hasMagic: has_magic_js_1.hasMagic,
+    escape: minimatch_1.escape,
+    unescape: minimatch_1.unescape,
+});
+exports.glob.glob = exports.glob;
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ 3986:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// this is just a very light wrapper around 2 arrays with an offset index
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Pattern = void 0;
+const minimatch_1 = __nccwpck_require__(3457);
+const isPatternList = (pl) => pl.length >= 1;
+const isGlobList = (gl) => gl.length >= 1;
+/**
+ * An immutable-ish view on an array of glob parts and their parsed
+ * results
+ */
+class Pattern {
+    #patternList;
+    #globList;
+    #index;
+    length;
+    #platform;
+    #rest;
+    #globString;
+    #isDrive;
+    #isUNC;
+    #isAbsolute;
+    #followGlobstar = true;
+    constructor(patternList, globList, index, platform) {
+        if (!isPatternList(patternList)) {
+            throw new TypeError('empty pattern list');
+        }
+        if (!isGlobList(globList)) {
+            throw new TypeError('empty glob list');
+        }
+        if (globList.length !== patternList.length) {
+            throw new TypeError('mismatched pattern list and glob list lengths');
+        }
+        this.length = patternList.length;
+        if (index < 0 || index >= this.length) {
+            throw new TypeError('index out of range');
+        }
+        this.#patternList = patternList;
+        this.#globList = globList;
+        this.#index = index;
+        this.#platform = platform;
+        // normalize root entries of absolute patterns on initial creation.
+        if (this.#index === 0) {
+            // c: => ['c:/']
+            // C:/ => ['C:/']
+            // C:/x => ['C:/', 'x']
+            // //host/share => ['//host/share/']
+            // //host/share/ => ['//host/share/']
+            // //host/share/x => ['//host/share/', 'x']
+            // /etc => ['/', 'etc']
+            // / => ['/']
+            if (this.isUNC()) {
+                // '' / '' / 'host' / 'share'
+                const [p0, p1, p2, p3, ...prest] = this.#patternList;
+                const [g0, g1, g2, g3, ...grest] = this.#globList;
+                if (prest[0] === '') {
+                    // ends in /
+                    prest.shift();
+                    grest.shift();
+                }
+                const p = [p0, p1, p2, p3, ''].join('/');
+                const g = [g0, g1, g2, g3, ''].join('/');
+                this.#patternList = [p, ...prest];
+                this.#globList = [g, ...grest];
+                this.length = this.#patternList.length;
+            }
+            else if (this.isDrive() || this.isAbsolute()) {
+                const [p1, ...prest] = this.#patternList;
+                const [g1, ...grest] = this.#globList;
+                if (prest[0] === '') {
+                    // ends in /
+                    prest.shift();
+                    grest.shift();
+                }
+                const p = p1 + '/';
+                const g = g1 + '/';
+                this.#patternList = [p, ...prest];
+                this.#globList = [g, ...grest];
+                this.length = this.#patternList.length;
+            }
+        }
+    }
+    /**
+     * The first entry in the parsed list of patterns
+     */
+    pattern() {
+        return this.#patternList[this.#index];
+    }
+    /**
+     * true of if pattern() returns a string
+     */
+    isString() {
+        return typeof this.#patternList[this.#index] === 'string';
+    }
+    /**
+     * true of if pattern() returns GLOBSTAR
+     */
+    isGlobstar() {
+        return this.#patternList[this.#index] === minimatch_1.GLOBSTAR;
+    }
+    /**
+     * true if pattern() returns a regexp
+     */
+    isRegExp() {
+        return this.#patternList[this.#index] instanceof RegExp;
+    }
+    /**
+     * The /-joined set of glob parts that make up this pattern
+     */
+    globString() {
+        return (this.#globString =
+            this.#globString ||
+                (this.#index === 0
+                    ? this.isAbsolute()
+                        ? this.#globList[0] + this.#globList.slice(1).join('/')
+                        : this.#globList.join('/')
+                    : this.#globList.slice(this.#index).join('/')));
+    }
+    /**
+     * true if there are more pattern parts after this one
+     */
+    hasMore() {
+        return this.length > this.#index + 1;
+    }
+    /**
+     * The rest of the pattern after this part, or null if this is the end
+     */
+    rest() {
+        if (this.#rest !== undefined)
+            return this.#rest;
+        if (!this.hasMore())
+            return (this.#rest = null);
+        this.#rest = new Pattern(this.#patternList, this.#globList, this.#index + 1, this.#platform);
+        this.#rest.#isAbsolute = this.#isAbsolute;
+        this.#rest.#isUNC = this.#isUNC;
+        this.#rest.#isDrive = this.#isDrive;
+        return this.#rest;
+    }
+    /**
+     * true if the pattern represents a //unc/path/ on windows
+     */
+    isUNC() {
+        const pl = this.#patternList;
+        return this.#isUNC !== undefined
+            ? this.#isUNC
+            : (this.#isUNC =
+                this.#platform === 'win32' &&
+                    this.#index === 0 &&
+                    pl[0] === '' &&
+                    pl[1] === '' &&
+                    typeof pl[2] === 'string' &&
+                    !!pl[2] &&
+                    typeof pl[3] === 'string' &&
+                    !!pl[3]);
+    }
+    // pattern like C:/...
+    // split = ['C:', ...]
+    // XXX: would be nice to handle patterns like `c:*` to test the cwd
+    // in c: for *, but I don't know of a way to even figure out what that
+    // cwd is without actually chdir'ing into it?
+    /**
+     * True if the pattern starts with a drive letter on Windows
+     */
+    isDrive() {
+        const pl = this.#patternList;
+        return this.#isDrive !== undefined
+            ? this.#isDrive
+            : (this.#isDrive =
+                this.#platform === 'win32' &&
+                    this.#index === 0 &&
+                    this.length > 1 &&
+                    typeof pl[0] === 'string' &&
+                    /^[a-z]:$/i.test(pl[0]));
+    }
+    // pattern = '/' or '/...' or '/x/...'
+    // split = ['', ''] or ['', ...] or ['', 'x', ...]
+    // Drive and UNC both considered absolute on windows
+    /**
+     * True if the pattern is rooted on an absolute path
+     */
+    isAbsolute() {
+        const pl = this.#patternList;
+        return this.#isAbsolute !== undefined
+            ? this.#isAbsolute
+            : (this.#isAbsolute =
+                (pl[0] === '' && pl.length > 1) ||
+                    this.isDrive() ||
+                    this.isUNC());
+    }
+    /**
+     * consume the root of the pattern, and return it
+     */
+    root() {
+        const p = this.#patternList[0];
+        return typeof p === 'string' && this.isAbsolute() && this.#index === 0
+            ? p
+            : '';
+    }
+    /**
+     * Check to see if the current globstar pattern is allowed to follow
+     * a symbolic link.
+     */
+    checkFollowGlobstar() {
+        return !(this.#index === 0 ||
+            !this.isGlobstar() ||
+            !this.#followGlobstar);
+    }
+    /**
+     * Mark that the current globstar pattern is following a symbolic link
+     */
+    markFollowGlobstar() {
+        if (this.#index === 0 || !this.isGlobstar() || !this.#followGlobstar)
+            return false;
+        this.#followGlobstar = false;
+        return true;
+    }
+}
+exports.Pattern = Pattern;
+//# sourceMappingURL=pattern.js.map
+
+/***/ }),
+
+/***/ 5722:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+// synchronous utility for filtering entries and calculating subwalks
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Processor = exports.SubWalks = exports.MatchRecord = exports.HasWalkedCache = void 0;
+const minimatch_1 = __nccwpck_require__(3457);
+/**
+ * A cache of which patterns have been processed for a given Path
+ */
+class HasWalkedCache {
+    store;
+    constructor(store = new Map()) {
+        this.store = store;
+    }
+    copy() {
+        return new HasWalkedCache(new Map(this.store));
+    }
+    hasWalked(target, pattern) {
+        return this.store.get(target.fullpath())?.has(pattern.globString());
+    }
+    storeWalked(target, pattern) {
+        const fullpath = target.fullpath();
+        const cached = this.store.get(fullpath);
+        if (cached)
+            cached.add(pattern.globString());
+        else
+            this.store.set(fullpath, new Set([pattern.globString()]));
+    }
+}
+exports.HasWalkedCache = HasWalkedCache;
+/**
+ * A record of which paths have been matched in a given walk step,
+ * and whether they only are considered a match if they are a directory,
+ * and whether their absolute or relative path should be returned.
+ */
+class MatchRecord {
+    store = new Map();
+    add(target, absolute, ifDir) {
+        const n = (absolute ? 2 : 0) | (ifDir ? 1 : 0);
+        const current = this.store.get(target);
+        this.store.set(target, current === undefined ? n : n & current);
+    }
+    // match, absolute, ifdir
+    entries() {
+        return [...this.store.entries()].map(([path, n]) => [
+            path,
+            !!(n & 2),
+            !!(n & 1),
+        ]);
+    }
+}
+exports.MatchRecord = MatchRecord;
+/**
+ * A collection of patterns that must be processed in a subsequent step
+ * for a given path.
+ */
+class SubWalks {
+    store = new Map();
+    add(target, pattern) {
+        if (!target.canReaddir()) {
+            return;
+        }
+        const subs = this.store.get(target);
+        if (subs) {
+            if (!subs.find(p => p.globString() === pattern.globString())) {
+                subs.push(pattern);
+            }
+        }
+        else
+            this.store.set(target, [pattern]);
+    }
+    get(target) {
+        const subs = this.store.get(target);
+        /* c8 ignore start */
+        if (!subs) {
+            throw new Error('attempting to walk unknown path');
+        }
+        /* c8 ignore stop */
+        return subs;
+    }
+    entries() {
+        return this.keys().map(k => [k, this.store.get(k)]);
+    }
+    keys() {
+        return [...this.store.keys()].filter(t => t.canReaddir());
+    }
+}
+exports.SubWalks = SubWalks;
+/**
+ * The class that processes patterns for a given path.
+ *
+ * Handles child entry filtering, and determining whether a path's
+ * directory contents must be read.
+ */
+class Processor {
+    hasWalkedCache;
+    matches = new MatchRecord();
+    subwalks = new SubWalks();
+    patterns;
+    follow;
+    dot;
+    opts;
+    constructor(opts, hasWalkedCache) {
+        this.opts = opts;
+        this.follow = !!opts.follow;
+        this.dot = !!opts.dot;
+        this.hasWalkedCache = hasWalkedCache
+            ? hasWalkedCache.copy()
+            : new HasWalkedCache();
+    }
+    processPatterns(target, patterns) {
+        this.patterns = patterns;
+        const processingSet = patterns.map(p => [target, p]);
+        // map of paths to the magic-starting subwalks they need to walk
+        // first item in patterns is the filter
+        for (let [t, pattern] of processingSet) {
+            this.hasWalkedCache.storeWalked(t, pattern);
+            const root = pattern.root();
+            const absolute = pattern.isAbsolute() && this.opts.absolute !== false;
+            // start absolute patterns at root
+            if (root) {
+                t = t.resolve(root === '/' && this.opts.root !== undefined
+                    ? this.opts.root
+                    : root);
+                const rest = pattern.rest();
+                if (!rest) {
+                    this.matches.add(t, true, false);
+                    continue;
+                }
+                else {
+                    pattern = rest;
+                }
+            }
+            if (t.isENOENT())
+                continue;
+            let p;
+            let rest;
+            let changed = false;
+            while (typeof (p = pattern.pattern()) === 'string' &&
+                (rest = pattern.rest())) {
+                const c = t.resolve(p);
+                t = c;
+                pattern = rest;
+                changed = true;
+            }
+            p = pattern.pattern();
+            rest = pattern.rest();
+            if (changed) {
+                if (this.hasWalkedCache.hasWalked(t, pattern))
+                    continue;
+                this.hasWalkedCache.storeWalked(t, pattern);
+            }
+            // now we have either a final string for a known entry,
+            // more strings for an unknown entry,
+            // or a pattern starting with magic, mounted on t.
+            if (typeof p === 'string') {
+                // must not be final entry, otherwise we would have
+                // concatenated it earlier.
+                const ifDir = p === '..' || p === '' || p === '.';
+                this.matches.add(t.resolve(p), absolute, ifDir);
+                continue;
+            }
+            else if (p === minimatch_1.GLOBSTAR) {
+                // if no rest, match and subwalk pattern
+                // if rest, process rest and subwalk pattern
+                // if it's a symlink, but we didn't get here by way of a
+                // globstar match (meaning it's the first time THIS globstar
+                // has traversed a symlink), then we follow it. Otherwise, stop.
+                if (!t.isSymbolicLink() ||
+                    this.follow ||
+                    pattern.checkFollowGlobstar()) {
+                    this.subwalks.add(t, pattern);
+                }
+                const rp = rest?.pattern();
+                const rrest = rest?.rest();
+                if (!rest || ((rp === '' || rp === '.') && !rrest)) {
+                    // only HAS to be a dir if it ends in **/ or **/.
+                    // but ending in ** will match files as well.
+                    this.matches.add(t, absolute, rp === '' || rp === '.');
+                }
+                else {
+                    if (rp === '..') {
+                        // this would mean you're matching **/.. at the fs root,
+                        // and no thanks, I'm not gonna test that specific case.
+                        /* c8 ignore start */
+                        const tp = t.parent || t;
+                        /* c8 ignore stop */
+                        if (!rrest)
+                            this.matches.add(tp, absolute, true);
+                        else if (!this.hasWalkedCache.hasWalked(tp, rrest)) {
+                            this.subwalks.add(tp, rrest);
+                        }
+                    }
+                }
+            }
+            else if (p instanceof RegExp) {
+                this.subwalks.add(t, pattern);
+            }
+        }
+        return this;
+    }
+    subwalkTargets() {
+        return this.subwalks.keys();
+    }
+    child() {
+        return new Processor(this.opts, this.hasWalkedCache);
+    }
+    // return a new Processor containing the subwalks for each
+    // child entry, and a set of matches, and
+    // a hasWalkedCache that's a copy of this one
+    // then we're going to call
+    filterEntries(parent, entries) {
+        const patterns = this.subwalks.get(parent);
+        // put matches and entry walks into the results processor
+        const results = this.child();
+        for (const e of entries) {
+            for (const pattern of patterns) {
+                const absolute = pattern.isAbsolute();
+                const p = pattern.pattern();
+                const rest = pattern.rest();
+                if (p === minimatch_1.GLOBSTAR) {
+                    results.testGlobstar(e, pattern, rest, absolute);
+                }
+                else if (p instanceof RegExp) {
+                    results.testRegExp(e, p, rest, absolute);
+                }
+                else {
+                    results.testString(e, p, rest, absolute);
+                }
+            }
+        }
+        return results;
+    }
+    testGlobstar(e, pattern, rest, absolute) {
+        if (this.dot || !e.name.startsWith('.')) {
+            if (!pattern.hasMore()) {
+                this.matches.add(e, absolute, false);
+            }
+            if (e.canReaddir()) {
+                // if we're in follow mode or it's not a symlink, just keep
+                // testing the same pattern. If there's more after the globstar,
+                // then this symlink consumes the globstar. If not, then we can
+                // follow at most ONE symlink along the way, so we mark it, which
+                // also checks to ensure that it wasn't already marked.
+                if (this.follow || !e.isSymbolicLink()) {
+                    this.subwalks.add(e, pattern);
+                }
+                else if (e.isSymbolicLink()) {
+                    if (rest && pattern.checkFollowGlobstar()) {
+                        this.subwalks.add(e, rest);
+                    }
+                    else if (pattern.markFollowGlobstar()) {
+                        this.subwalks.add(e, pattern);
+                    }
+                }
+            }
+        }
+        // if the NEXT thing matches this entry, then also add
+        // the rest.
+        if (rest) {
+            const rp = rest.pattern();
+            if (typeof rp === 'string' &&
+                // dots and empty were handled already
+                rp !== '..' &&
+                rp !== '' &&
+                rp !== '.') {
+                this.testString(e, rp, rest.rest(), absolute);
+            }
+            else if (rp === '..') {
+                /* c8 ignore start */
+                const ep = e.parent || e;
+                /* c8 ignore stop */
+                this.subwalks.add(ep, rest);
+            }
+            else if (rp instanceof RegExp) {
+                this.testRegExp(e, rp, rest.rest(), absolute);
+            }
+        }
+    }
+    testRegExp(e, p, rest, absolute) {
+        if (!p.test(e.name))
+            return;
+        if (!rest) {
+            this.matches.add(e, absolute, false);
+        }
+        else {
+            this.subwalks.add(e, rest);
+        }
+    }
+    testString(e, p, rest, absolute) {
+        // should never happen?
+        if (!e.isNamed(p))
+            return;
+        if (!rest) {
+            this.matches.add(e, absolute, false);
+        }
+        else {
+            this.subwalks.add(e, rest);
+        }
+    }
+}
+exports.Processor = Processor;
+//# sourceMappingURL=processor.js.map
+
+/***/ }),
+
+/***/ 2909:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GlobStream = exports.GlobWalker = exports.GlobUtil = void 0;
+/**
+ * Single-use utility classes to provide functionality to the {@link Glob}
+ * methods.
+ *
+ * @module
+ */
+const minipass_1 = __nccwpck_require__(2253);
+const ignore_js_1 = __nccwpck_require__(9550);
+const processor_js_1 = __nccwpck_require__(5722);
+const makeIgnore = (ignore, opts) => typeof ignore === 'string'
+    ? new ignore_js_1.Ignore([ignore], opts)
+    : Array.isArray(ignore)
+        ? new ignore_js_1.Ignore(ignore, opts)
+        : ignore;
+/**
+ * basic walking utilities that all the glob walker types use
+ */
+class GlobUtil {
+    path;
+    patterns;
+    opts;
+    seen = new Set();
+    paused = false;
+    aborted = false;
+    #onResume = [];
+    #ignore;
+    #sep;
+    signal;
+    maxDepth;
+    constructor(patterns, path, opts) {
+        this.patterns = patterns;
+        this.path = path;
+        this.opts = opts;
+        this.#sep = !opts.posix && opts.platform === 'win32' ? '\\' : '/';
+        if (opts.ignore) {
+            this.#ignore = makeIgnore(opts.ignore, opts);
+        }
+        // ignore, always set with maxDepth, but it's optional on the
+        // GlobOptions type
+        /* c8 ignore start */
+        this.maxDepth = opts.maxDepth || Infinity;
+        /* c8 ignore stop */
+        if (opts.signal) {
+            this.signal = opts.signal;
+            this.signal.addEventListener('abort', () => {
+                this.#onResume.length = 0;
+            });
+        }
+    }
+    #ignored(path) {
+        return this.seen.has(path) || !!this.#ignore?.ignored?.(path);
+    }
+    #childrenIgnored(path) {
+        return !!this.#ignore?.childrenIgnored?.(path);
+    }
+    // backpressure mechanism
+    pause() {
+        this.paused = true;
+    }
+    resume() {
+        /* c8 ignore start */
+        if (this.signal?.aborted)
+            return;
+        /* c8 ignore stop */
+        this.paused = false;
+        let fn = undefined;
+        while (!this.paused && (fn = this.#onResume.shift())) {
+            fn();
+        }
+    }
+    onResume(fn) {
+        if (this.signal?.aborted)
+            return;
+        /* c8 ignore start */
+        if (!this.paused) {
+            fn();
+        }
+        else {
+            /* c8 ignore stop */
+            this.#onResume.push(fn);
+        }
+    }
+    // do the requisite realpath/stat checking, and return the path
+    // to add or undefined to filter it out.
+    async matchCheck(e, ifDir) {
+        if (ifDir && this.opts.nodir)
+            return undefined;
+        let rpc;
+        if (this.opts.realpath) {
+            rpc = e.realpathCached() || (await e.realpath());
+            if (!rpc)
+                return undefined;
+            e = rpc;
+        }
+        const needStat = e.isUnknown() || this.opts.stat;
+        return this.matchCheckTest(needStat ? await e.lstat() : e, ifDir);
+    }
+    matchCheckTest(e, ifDir) {
+        return e &&
+            (this.maxDepth === Infinity || e.depth() <= this.maxDepth) &&
+            (!ifDir || e.canReaddir()) &&
+            (!this.opts.nodir || !e.isDirectory()) &&
+            !this.#ignored(e)
+            ? e
+            : undefined;
+    }
+    matchCheckSync(e, ifDir) {
+        if (ifDir && this.opts.nodir)
+            return undefined;
+        let rpc;
+        if (this.opts.realpath) {
+            rpc = e.realpathCached() || e.realpathSync();
+            if (!rpc)
+                return undefined;
+            e = rpc;
+        }
+        const needStat = e.isUnknown() || this.opts.stat;
+        return this.matchCheckTest(needStat ? e.lstatSync() : e, ifDir);
+    }
+    matchFinish(e, absolute) {
+        if (this.#ignored(e))
+            return;
+        const abs = this.opts.absolute === undefined ? absolute : this.opts.absolute;
+        this.seen.add(e);
+        const mark = this.opts.mark && e.isDirectory() ? this.#sep : '';
+        // ok, we have what we need!
+        if (this.opts.withFileTypes) {
+            this.matchEmit(e);
+        }
+        else if (abs) {
+            const abs = this.opts.posix ? e.fullpathPosix() : e.fullpath();
+            this.matchEmit(abs + mark);
+        }
+        else {
+            const rel = this.opts.posix ? e.relativePosix() : e.relative();
+            const pre = this.opts.dotRelative && !rel.startsWith('..' + this.#sep)
+                ? '.' + this.#sep
+                : '';
+            this.matchEmit(!rel ? '.' + mark : pre + rel + mark);
+        }
+    }
+    async match(e, absolute, ifDir) {
+        const p = await this.matchCheck(e, ifDir);
+        if (p)
+            this.matchFinish(p, absolute);
+    }
+    matchSync(e, absolute, ifDir) {
+        const p = this.matchCheckSync(e, ifDir);
+        if (p)
+            this.matchFinish(p, absolute);
+    }
+    walkCB(target, patterns, cb) {
+        /* c8 ignore start */
+        if (this.signal?.aborted)
+            cb();
+        /* c8 ignore stop */
+        this.walkCB2(target, patterns, new processor_js_1.Processor(this.opts), cb);
+    }
+    walkCB2(target, patterns, processor, cb) {
+        if (this.#childrenIgnored(target))
+            return cb();
+        if (this.signal?.aborted)
+            cb();
+        if (this.paused) {
+            this.onResume(() => this.walkCB2(target, patterns, processor, cb));
+            return;
+        }
+        processor.processPatterns(target, patterns);
+        // done processing.  all of the above is sync, can be abstracted out.
+        // subwalks is a map of paths to the entry filters they need
+        // matches is a map of paths to [absolute, ifDir] tuples.
+        let tasks = 1;
+        const next = () => {
+            if (--tasks === 0)
+                cb();
+        };
+        for (const [m, absolute, ifDir] of processor.matches.entries()) {
+            if (this.#ignored(m))
+                continue;
+            tasks++;
+            this.match(m, absolute, ifDir).then(() => next());
+        }
+        for (const t of processor.subwalkTargets()) {
+            if (this.maxDepth !== Infinity && t.depth() >= this.maxDepth) {
+                continue;
+            }
+            tasks++;
+            const childrenCached = t.readdirCached();
+            if (t.calledReaddir())
+                this.walkCB3(t, childrenCached, processor, next);
+            else {
+                t.readdirCB((_, entries) => this.walkCB3(t, entries, processor, next), true);
+            }
+        }
+        next();
+    }
+    walkCB3(target, entries, processor, cb) {
+        processor = processor.filterEntries(target, entries);
+        let tasks = 1;
+        const next = () => {
+            if (--tasks === 0)
+                cb();
+        };
+        for (const [m, absolute, ifDir] of processor.matches.entries()) {
+            if (this.#ignored(m))
+                continue;
+            tasks++;
+            this.match(m, absolute, ifDir).then(() => next());
+        }
+        for (const [target, patterns] of processor.subwalks.entries()) {
+            tasks++;
+            this.walkCB2(target, patterns, processor.child(), next);
+        }
+        next();
+    }
+    walkCBSync(target, patterns, cb) {
+        /* c8 ignore start */
+        if (this.signal?.aborted)
+            cb();
+        /* c8 ignore stop */
+        this.walkCB2Sync(target, patterns, new processor_js_1.Processor(this.opts), cb);
+    }
+    walkCB2Sync(target, patterns, processor, cb) {
+        if (this.#childrenIgnored(target))
+            return cb();
+        if (this.signal?.aborted)
+            cb();
+        if (this.paused) {
+            this.onResume(() => this.walkCB2Sync(target, patterns, processor, cb));
+            return;
+        }
+        processor.processPatterns(target, patterns);
+        // done processing.  all of the above is sync, can be abstracted out.
+        // subwalks is a map of paths to the entry filters they need
+        // matches is a map of paths to [absolute, ifDir] tuples.
+        let tasks = 1;
+        const next = () => {
+            if (--tasks === 0)
+                cb();
+        };
+        for (const [m, absolute, ifDir] of processor.matches.entries()) {
+            if (this.#ignored(m))
+                continue;
+            this.matchSync(m, absolute, ifDir);
+        }
+        for (const t of processor.subwalkTargets()) {
+            if (this.maxDepth !== Infinity && t.depth() >= this.maxDepth) {
+                continue;
+            }
+            tasks++;
+            const children = t.readdirSync();
+            this.walkCB3Sync(t, children, processor, next);
+        }
+        next();
+    }
+    walkCB3Sync(target, entries, processor, cb) {
+        processor = processor.filterEntries(target, entries);
+        let tasks = 1;
+        const next = () => {
+            if (--tasks === 0)
+                cb();
+        };
+        for (const [m, absolute, ifDir] of processor.matches.entries()) {
+            if (this.#ignored(m))
+                continue;
+            this.matchSync(m, absolute, ifDir);
+        }
+        for (const [target, patterns] of processor.subwalks.entries()) {
+            tasks++;
+            this.walkCB2Sync(target, patterns, processor.child(), next);
+        }
+        next();
+    }
+}
+exports.GlobUtil = GlobUtil;
+class GlobWalker extends GlobUtil {
+    matches;
+    constructor(patterns, path, opts) {
+        super(patterns, path, opts);
+        this.matches = new Set();
+    }
+    matchEmit(e) {
+        this.matches.add(e);
+    }
+    async walk() {
+        if (this.signal?.aborted)
+            throw this.signal.reason;
+        if (this.path.isUnknown()) {
+            await this.path.lstat();
+        }
+        await new Promise((res, rej) => {
+            this.walkCB(this.path, this.patterns, () => {
+                if (this.signal?.aborted) {
+                    rej(this.signal.reason);
+                }
+                else {
+                    res(this.matches);
+                }
+            });
+        });
+        return this.matches;
+    }
+    walkSync() {
+        if (this.signal?.aborted)
+            throw this.signal.reason;
+        if (this.path.isUnknown()) {
+            this.path.lstatSync();
+        }
+        // nothing for the callback to do, because this never pauses
+        this.walkCBSync(this.path, this.patterns, () => {
+            if (this.signal?.aborted)
+                throw this.signal.reason;
+        });
+        return this.matches;
+    }
+}
+exports.GlobWalker = GlobWalker;
+class GlobStream extends GlobUtil {
+    results;
+    constructor(patterns, path, opts) {
+        super(patterns, path, opts);
+        this.results = new minipass_1.Minipass({
+            signal: this.signal,
+            objectMode: true,
+        });
+        this.results.on('drain', () => this.resume());
+        this.results.on('resume', () => this.resume());
+    }
+    matchEmit(e) {
+        this.results.write(e);
+        if (!this.results.flowing)
+            this.pause();
+    }
+    stream() {
+        const target = this.path;
+        if (target.isUnknown()) {
+            target.lstat().then(() => {
+                this.walkCB(target, this.patterns, () => this.results.end());
+            });
+        }
+        else {
+            this.walkCB(target, this.patterns, () => this.results.end());
+        }
+        return this.results;
+    }
+    streamSync() {
+        if (this.path.isUnknown()) {
+            this.path.lstatSync();
+        }
+        this.walkCBSync(this.path, this.patterns, () => this.results.end());
+        return this.results;
+    }
+}
+exports.GlobStream = GlobStream;
+//# sourceMappingURL=walker.js.map
 
 /***/ }),
 
@@ -15662,6 +15321,1041 @@ const unescape = (s, { windowsPathsNoEscape = false, } = {}) => {
 };
 exports.unescape = unescape;
 //# sourceMappingURL=unescape.js.map
+
+/***/ }),
+
+/***/ 2253:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Minipass = exports.isWritable = exports.isReadable = exports.isStream = void 0;
+const proc = typeof process === 'object' && process
+    ? process
+    : {
+        stdout: null,
+        stderr: null,
+    };
+const events_1 = __nccwpck_require__(2361);
+const stream_1 = __importDefault(__nccwpck_require__(2781));
+const string_decoder_1 = __nccwpck_require__(1576);
+/**
+ * Return true if the argument is a Minipass stream, Node stream, or something
+ * else that Minipass can interact with.
+ */
+const isStream = (s) => !!s &&
+    typeof s === 'object' &&
+    (s instanceof Minipass ||
+        s instanceof stream_1.default ||
+        (0, exports.isReadable)(s) ||
+        (0, exports.isWritable)(s));
+exports.isStream = isStream;
+/**
+ * Return true if the argument is a valid {@link Minipass.Readable}
+ */
+const isReadable = (s) => !!s &&
+    typeof s === 'object' &&
+    s instanceof events_1.EventEmitter &&
+    typeof s.pipe === 'function' &&
+    // node core Writable streams have a pipe() method, but it throws
+    s.pipe !== stream_1.default.Writable.prototype.pipe;
+exports.isReadable = isReadable;
+/**
+ * Return true if the argument is a valid {@link Minipass.Writable}
+ */
+const isWritable = (s) => !!s &&
+    typeof s === 'object' &&
+    s instanceof events_1.EventEmitter &&
+    typeof s.write === 'function' &&
+    typeof s.end === 'function';
+exports.isWritable = isWritable;
+const EOF = Symbol('EOF');
+const MAYBE_EMIT_END = Symbol('maybeEmitEnd');
+const EMITTED_END = Symbol('emittedEnd');
+const EMITTING_END = Symbol('emittingEnd');
+const EMITTED_ERROR = Symbol('emittedError');
+const CLOSED = Symbol('closed');
+const READ = Symbol('read');
+const FLUSH = Symbol('flush');
+const FLUSHCHUNK = Symbol('flushChunk');
+const ENCODING = Symbol('encoding');
+const DECODER = Symbol('decoder');
+const FLOWING = Symbol('flowing');
+const PAUSED = Symbol('paused');
+const RESUME = Symbol('resume');
+const BUFFER = Symbol('buffer');
+const PIPES = Symbol('pipes');
+const BUFFERLENGTH = Symbol('bufferLength');
+const BUFFERPUSH = Symbol('bufferPush');
+const BUFFERSHIFT = Symbol('bufferShift');
+const OBJECTMODE = Symbol('objectMode');
+// internal event when stream is destroyed
+const DESTROYED = Symbol('destroyed');
+// internal event when stream has an error
+const ERROR = Symbol('error');
+const EMITDATA = Symbol('emitData');
+const EMITEND = Symbol('emitEnd');
+const EMITEND2 = Symbol('emitEnd2');
+const ASYNC = Symbol('async');
+const ABORT = Symbol('abort');
+const ABORTED = Symbol('aborted');
+const SIGNAL = Symbol('signal');
+const DATALISTENERS = Symbol('dataListeners');
+const DISCARDED = Symbol('discarded');
+const defer = (fn) => Promise.resolve().then(fn);
+const nodefer = (fn) => fn();
+const isEndish = (ev) => ev === 'end' || ev === 'finish' || ev === 'prefinish';
+const isArrayBufferLike = (b) => b instanceof ArrayBuffer ||
+    (!!b &&
+        typeof b === 'object' &&
+        b.constructor &&
+        b.constructor.name === 'ArrayBuffer' &&
+        b.byteLength >= 0);
+const isArrayBufferView = (b) => !Buffer.isBuffer(b) && ArrayBuffer.isView(b);
+/**
+ * Internal class representing a pipe to a destination stream.
+ *
+ * @internal
+ */
+class Pipe {
+    src;
+    dest;
+    opts;
+    ondrain;
+    constructor(src, dest, opts) {
+        this.src = src;
+        this.dest = dest;
+        this.opts = opts;
+        this.ondrain = () => src[RESUME]();
+        this.dest.on('drain', this.ondrain);
+    }
+    unpipe() {
+        this.dest.removeListener('drain', this.ondrain);
+    }
+    // only here for the prototype
+    /* c8 ignore start */
+    proxyErrors(_er) { }
+    /* c8 ignore stop */
+    end() {
+        this.unpipe();
+        if (this.opts.end)
+            this.dest.end();
+    }
+}
+/**
+ * Internal class representing a pipe to a destination stream where
+ * errors are proxied.
+ *
+ * @internal
+ */
+class PipeProxyErrors extends Pipe {
+    unpipe() {
+        this.src.removeListener('error', this.proxyErrors);
+        super.unpipe();
+    }
+    constructor(src, dest, opts) {
+        super(src, dest, opts);
+        this.proxyErrors = er => dest.emit('error', er);
+        src.on('error', this.proxyErrors);
+    }
+}
+const isObjectModeOptions = (o) => !!o.objectMode;
+const isEncodingOptions = (o) => !o.objectMode && !!o.encoding && o.encoding !== 'buffer';
+/**
+ * Main export, the Minipass class
+ *
+ * `RType` is the type of data emitted, defaults to Buffer
+ *
+ * `WType` is the type of data to be written, if RType is buffer or string,
+ * then any {@link Minipass.ContiguousData} is allowed.
+ *
+ * `Events` is the set of event handler signatures that this object
+ * will emit, see {@link Minipass.Events}
+ */
+class Minipass extends events_1.EventEmitter {
+    [FLOWING] = false;
+    [PAUSED] = false;
+    [PIPES] = [];
+    [BUFFER] = [];
+    [OBJECTMODE];
+    [ENCODING];
+    [ASYNC];
+    [DECODER];
+    [EOF] = false;
+    [EMITTED_END] = false;
+    [EMITTING_END] = false;
+    [CLOSED] = false;
+    [EMITTED_ERROR] = null;
+    [BUFFERLENGTH] = 0;
+    [DESTROYED] = false;
+    [SIGNAL];
+    [ABORTED] = false;
+    [DATALISTENERS] = 0;
+    [DISCARDED] = false;
+    /**
+     * true if the stream can be written
+     */
+    writable = true;
+    /**
+     * true if the stream can be read
+     */
+    readable = true;
+    /**
+     * If `RType` is Buffer, then options do not need to be provided.
+     * Otherwise, an options object must be provided to specify either
+     * {@link Minipass.SharedOptions.objectMode} or
+     * {@link Minipass.SharedOptions.encoding}, as appropriate.
+     */
+    constructor(...args) {
+        const options = (args[0] ||
+            {});
+        super();
+        if (options.objectMode && typeof options.encoding === 'string') {
+            throw new TypeError('Encoding and objectMode may not be used together');
+        }
+        if (isObjectModeOptions(options)) {
+            this[OBJECTMODE] = true;
+            this[ENCODING] = null;
+        }
+        else if (isEncodingOptions(options)) {
+            this[ENCODING] = options.encoding;
+            this[OBJECTMODE] = false;
+        }
+        else {
+            this[OBJECTMODE] = false;
+            this[ENCODING] = null;
+        }
+        this[ASYNC] = !!options.async;
+        this[DECODER] = this[ENCODING]
+            ? new string_decoder_1.StringDecoder(this[ENCODING])
+            : null;
+        //@ts-ignore - private option for debugging and testing
+        if (options && options.debugExposeBuffer === true) {
+            Object.defineProperty(this, 'buffer', { get: () => this[BUFFER] });
+        }
+        //@ts-ignore - private option for debugging and testing
+        if (options && options.debugExposePipes === true) {
+            Object.defineProperty(this, 'pipes', { get: () => this[PIPES] });
+        }
+        const { signal } = options;
+        if (signal) {
+            this[SIGNAL] = signal;
+            if (signal.aborted) {
+                this[ABORT]();
+            }
+            else {
+                signal.addEventListener('abort', () => this[ABORT]());
+            }
+        }
+    }
+    /**
+     * The amount of data stored in the buffer waiting to be read.
+     *
+     * For Buffer strings, this will be the total byte length.
+     * For string encoding streams, this will be the string character length,
+     * according to JavaScript's `string.length` logic.
+     * For objectMode streams, this is a count of the items waiting to be
+     * emitted.
+     */
+    get bufferLength() {
+        return this[BUFFERLENGTH];
+    }
+    /**
+     * The `BufferEncoding` currently in use, or `null`
+     */
+    get encoding() {
+        return this[ENCODING];
+    }
+    /**
+     * @deprecated - This is a read only property
+     */
+    set encoding(_enc) {
+        throw new Error('Encoding must be set at instantiation time');
+    }
+    /**
+     * @deprecated - Encoding may only be set at instantiation time
+     */
+    setEncoding(_enc) {
+        throw new Error('Encoding must be set at instantiation time');
+    }
+    /**
+     * True if this is an objectMode stream
+     */
+    get objectMode() {
+        return this[OBJECTMODE];
+    }
+    /**
+     * @deprecated - This is a read-only property
+     */
+    set objectMode(_om) {
+        throw new Error('objectMode must be set at instantiation time');
+    }
+    /**
+     * true if this is an async stream
+     */
+    get ['async']() {
+        return this[ASYNC];
+    }
+    /**
+     * Set to true to make this stream async.
+     *
+     * Once set, it cannot be unset, as this would potentially cause incorrect
+     * behavior.  Ie, a sync stream can be made async, but an async stream
+     * cannot be safely made sync.
+     */
+    set ['async'](a) {
+        this[ASYNC] = this[ASYNC] || !!a;
+    }
+    // drop everything and get out of the flow completely
+    [ABORT]() {
+        this[ABORTED] = true;
+        this.emit('abort', this[SIGNAL]?.reason);
+        this.destroy(this[SIGNAL]?.reason);
+    }
+    /**
+     * True if the stream has been aborted.
+     */
+    get aborted() {
+        return this[ABORTED];
+    }
+    /**
+     * No-op setter. Stream aborted status is set via the AbortSignal provided
+     * in the constructor options.
+     */
+    set aborted(_) { }
+    write(chunk, encoding, cb) {
+        if (this[ABORTED])
+            return false;
+        if (this[EOF])
+            throw new Error('write after end');
+        if (this[DESTROYED]) {
+            this.emit('error', Object.assign(new Error('Cannot call write after a stream was destroyed'), { code: 'ERR_STREAM_DESTROYED' }));
+            return true;
+        }
+        if (typeof encoding === 'function') {
+            cb = encoding;
+            encoding = 'utf8';
+        }
+        if (!encoding)
+            encoding = 'utf8';
+        const fn = this[ASYNC] ? defer : nodefer;
+        // convert array buffers and typed array views into buffers
+        // at some point in the future, we may want to do the opposite!
+        // leave strings and buffers as-is
+        // anything is only allowed if in object mode, so throw
+        if (!this[OBJECTMODE] && !Buffer.isBuffer(chunk)) {
+            if (isArrayBufferView(chunk)) {
+                //@ts-ignore - sinful unsafe type changing
+                chunk = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            }
+            else if (isArrayBufferLike(chunk)) {
+                //@ts-ignore - sinful unsafe type changing
+                chunk = Buffer.from(chunk);
+            }
+            else if (typeof chunk !== 'string') {
+                throw new Error('Non-contiguous data written to non-objectMode stream');
+            }
+        }
+        // handle object mode up front, since it's simpler
+        // this yields better performance, fewer checks later.
+        if (this[OBJECTMODE]) {
+            // maybe impossible?
+            /* c8 ignore start */
+            if (this[FLOWING] && this[BUFFERLENGTH] !== 0)
+                this[FLUSH](true);
+            /* c8 ignore stop */
+            if (this[FLOWING])
+                this.emit('data', chunk);
+            else
+                this[BUFFERPUSH](chunk);
+            if (this[BUFFERLENGTH] !== 0)
+                this.emit('readable');
+            if (cb)
+                fn(cb);
+            return this[FLOWING];
+        }
+        // at this point the chunk is a buffer or string
+        // don't buffer it up or send it to the decoder
+        if (!chunk.length) {
+            if (this[BUFFERLENGTH] !== 0)
+                this.emit('readable');
+            if (cb)
+                fn(cb);
+            return this[FLOWING];
+        }
+        // fast-path writing strings of same encoding to a stream with
+        // an empty buffer, skipping the buffer/decoder dance
+        if (typeof chunk === 'string' &&
+            // unless it is a string already ready for us to use
+            !(encoding === this[ENCODING] && !this[DECODER]?.lastNeed)) {
+            //@ts-ignore - sinful unsafe type change
+            chunk = Buffer.from(chunk, encoding);
+        }
+        if (Buffer.isBuffer(chunk) && this[ENCODING]) {
+            //@ts-ignore - sinful unsafe type change
+            chunk = this[DECODER].write(chunk);
+        }
+        // Note: flushing CAN potentially switch us into not-flowing mode
+        if (this[FLOWING] && this[BUFFERLENGTH] !== 0)
+            this[FLUSH](true);
+        if (this[FLOWING])
+            this.emit('data', chunk);
+        else
+            this[BUFFERPUSH](chunk);
+        if (this[BUFFERLENGTH] !== 0)
+            this.emit('readable');
+        if (cb)
+            fn(cb);
+        return this[FLOWING];
+    }
+    /**
+     * Low-level explicit read method.
+     *
+     * In objectMode, the argument is ignored, and one item is returned if
+     * available.
+     *
+     * `n` is the number of bytes (or in the case of encoding streams,
+     * characters) to consume. If `n` is not provided, then the entire buffer
+     * is returned, or `null` is returned if no data is available.
+     *
+     * If `n` is greater that the amount of data in the internal buffer,
+     * then `null` is returned.
+     */
+    read(n) {
+        if (this[DESTROYED])
+            return null;
+        this[DISCARDED] = false;
+        if (this[BUFFERLENGTH] === 0 ||
+            n === 0 ||
+            (n && n > this[BUFFERLENGTH])) {
+            this[MAYBE_EMIT_END]();
+            return null;
+        }
+        if (this[OBJECTMODE])
+            n = null;
+        if (this[BUFFER].length > 1 && !this[OBJECTMODE]) {
+            // not object mode, so if we have an encoding, then RType is string
+            // otherwise, must be Buffer
+            this[BUFFER] = [
+                (this[ENCODING]
+                    ? this[BUFFER].join('')
+                    : Buffer.concat(this[BUFFER], this[BUFFERLENGTH])),
+            ];
+        }
+        const ret = this[READ](n || null, this[BUFFER][0]);
+        this[MAYBE_EMIT_END]();
+        return ret;
+    }
+    [READ](n, chunk) {
+        if (this[OBJECTMODE])
+            this[BUFFERSHIFT]();
+        else {
+            const c = chunk;
+            if (n === c.length || n === null)
+                this[BUFFERSHIFT]();
+            else if (typeof c === 'string') {
+                this[BUFFER][0] = c.slice(n);
+                chunk = c.slice(0, n);
+                this[BUFFERLENGTH] -= n;
+            }
+            else {
+                this[BUFFER][0] = c.subarray(n);
+                chunk = c.subarray(0, n);
+                this[BUFFERLENGTH] -= n;
+            }
+        }
+        this.emit('data', chunk);
+        if (!this[BUFFER].length && !this[EOF])
+            this.emit('drain');
+        return chunk;
+    }
+    end(chunk, encoding, cb) {
+        if (typeof chunk === 'function') {
+            cb = chunk;
+            chunk = undefined;
+        }
+        if (typeof encoding === 'function') {
+            cb = encoding;
+            encoding = 'utf8';
+        }
+        if (chunk !== undefined)
+            this.write(chunk, encoding);
+        if (cb)
+            this.once('end', cb);
+        this[EOF] = true;
+        this.writable = false;
+        // if we haven't written anything, then go ahead and emit,
+        // even if we're not reading.
+        // we'll re-emit if a new 'end' listener is added anyway.
+        // This makes MP more suitable to write-only use cases.
+        if (this[FLOWING] || !this[PAUSED])
+            this[MAYBE_EMIT_END]();
+        return this;
+    }
+    // don't let the internal resume be overwritten
+    [RESUME]() {
+        if (this[DESTROYED])
+            return;
+        if (!this[DATALISTENERS] && !this[PIPES].length) {
+            this[DISCARDED] = true;
+        }
+        this[PAUSED] = false;
+        this[FLOWING] = true;
+        this.emit('resume');
+        if (this[BUFFER].length)
+            this[FLUSH]();
+        else if (this[EOF])
+            this[MAYBE_EMIT_END]();
+        else
+            this.emit('drain');
+    }
+    /**
+     * Resume the stream if it is currently in a paused state
+     *
+     * If called when there are no pipe destinations or `data` event listeners,
+     * this will place the stream in a "discarded" state, where all data will
+     * be thrown away. The discarded state is removed if a pipe destination or
+     * data handler is added, if pause() is called, or if any synchronous or
+     * asynchronous iteration is started.
+     */
+    resume() {
+        return this[RESUME]();
+    }
+    /**
+     * Pause the stream
+     */
+    pause() {
+        this[FLOWING] = false;
+        this[PAUSED] = true;
+        this[DISCARDED] = false;
+    }
+    /**
+     * true if the stream has been forcibly destroyed
+     */
+    get destroyed() {
+        return this[DESTROYED];
+    }
+    /**
+     * true if the stream is currently in a flowing state, meaning that
+     * any writes will be immediately emitted.
+     */
+    get flowing() {
+        return this[FLOWING];
+    }
+    /**
+     * true if the stream is currently in a paused state
+     */
+    get paused() {
+        return this[PAUSED];
+    }
+    [BUFFERPUSH](chunk) {
+        if (this[OBJECTMODE])
+            this[BUFFERLENGTH] += 1;
+        else
+            this[BUFFERLENGTH] += chunk.length;
+        this[BUFFER].push(chunk);
+    }
+    [BUFFERSHIFT]() {
+        if (this[OBJECTMODE])
+            this[BUFFERLENGTH] -= 1;
+        else
+            this[BUFFERLENGTH] -= this[BUFFER][0].length;
+        return this[BUFFER].shift();
+    }
+    [FLUSH](noDrain = false) {
+        do { } while (this[FLUSHCHUNK](this[BUFFERSHIFT]()) &&
+            this[BUFFER].length);
+        if (!noDrain && !this[BUFFER].length && !this[EOF])
+            this.emit('drain');
+    }
+    [FLUSHCHUNK](chunk) {
+        this.emit('data', chunk);
+        return this[FLOWING];
+    }
+    /**
+     * Pipe all data emitted by this stream into the destination provided.
+     *
+     * Triggers the flow of data.
+     */
+    pipe(dest, opts) {
+        if (this[DESTROYED])
+            return dest;
+        this[DISCARDED] = false;
+        const ended = this[EMITTED_END];
+        opts = opts || {};
+        if (dest === proc.stdout || dest === proc.stderr)
+            opts.end = false;
+        else
+            opts.end = opts.end !== false;
+        opts.proxyErrors = !!opts.proxyErrors;
+        // piping an ended stream ends immediately
+        if (ended) {
+            if (opts.end)
+                dest.end();
+        }
+        else {
+            // "as" here just ignores the WType, which pipes don't care about,
+            // since they're only consuming from us, and writing to the dest
+            this[PIPES].push(!opts.proxyErrors
+                ? new Pipe(this, dest, opts)
+                : new PipeProxyErrors(this, dest, opts));
+            if (this[ASYNC])
+                defer(() => this[RESUME]());
+            else
+                this[RESUME]();
+        }
+        return dest;
+    }
+    /**
+     * Fully unhook a piped destination stream.
+     *
+     * If the destination stream was the only consumer of this stream (ie,
+     * there are no other piped destinations or `'data'` event listeners)
+     * then the flow of data will stop until there is another consumer or
+     * {@link Minipass#resume} is explicitly called.
+     */
+    unpipe(dest) {
+        const p = this[PIPES].find(p => p.dest === dest);
+        if (p) {
+            if (this[PIPES].length === 1) {
+                if (this[FLOWING] && this[DATALISTENERS] === 0) {
+                    this[FLOWING] = false;
+                }
+                this[PIPES] = [];
+            }
+            else
+                this[PIPES].splice(this[PIPES].indexOf(p), 1);
+            p.unpipe();
+        }
+    }
+    /**
+     * Alias for {@link Minipass#on}
+     */
+    addListener(ev, handler) {
+        return this.on(ev, handler);
+    }
+    /**
+     * Mostly identical to `EventEmitter.on`, with the following
+     * behavior differences to prevent data loss and unnecessary hangs:
+     *
+     * - Adding a 'data' event handler will trigger the flow of data
+     *
+     * - Adding a 'readable' event handler when there is data waiting to be read
+     *   will cause 'readable' to be emitted immediately.
+     *
+     * - Adding an 'endish' event handler ('end', 'finish', etc.) which has
+     *   already passed will cause the event to be emitted immediately and all
+     *   handlers removed.
+     *
+     * - Adding an 'error' event handler after an error has been emitted will
+     *   cause the event to be re-emitted immediately with the error previously
+     *   raised.
+     */
+    on(ev, handler) {
+        const ret = super.on(ev, handler);
+        if (ev === 'data') {
+            this[DISCARDED] = false;
+            this[DATALISTENERS]++;
+            if (!this[PIPES].length && !this[FLOWING]) {
+                this[RESUME]();
+            }
+        }
+        else if (ev === 'readable' && this[BUFFERLENGTH] !== 0) {
+            super.emit('readable');
+        }
+        else if (isEndish(ev) && this[EMITTED_END]) {
+            super.emit(ev);
+            this.removeAllListeners(ev);
+        }
+        else if (ev === 'error' && this[EMITTED_ERROR]) {
+            const h = handler;
+            if (this[ASYNC])
+                defer(() => h.call(this, this[EMITTED_ERROR]));
+            else
+                h.call(this, this[EMITTED_ERROR]);
+        }
+        return ret;
+    }
+    /**
+     * Alias for {@link Minipass#off}
+     */
+    removeListener(ev, handler) {
+        return this.off(ev, handler);
+    }
+    /**
+     * Mostly identical to `EventEmitter.off`
+     *
+     * If a 'data' event handler is removed, and it was the last consumer
+     * (ie, there are no pipe destinations or other 'data' event listeners),
+     * then the flow of data will stop until there is another consumer or
+     * {@link Minipass#resume} is explicitly called.
+     */
+    off(ev, handler) {
+        const ret = super.off(ev, handler);
+        // if we previously had listeners, and now we don't, and we don't
+        // have any pipes, then stop the flow, unless it's been explicitly
+        // put in a discarded flowing state via stream.resume().
+        if (ev === 'data') {
+            this[DATALISTENERS] = this.listeners('data').length;
+            if (this[DATALISTENERS] === 0 &&
+                !this[DISCARDED] &&
+                !this[PIPES].length) {
+                this[FLOWING] = false;
+            }
+        }
+        return ret;
+    }
+    /**
+     * Mostly identical to `EventEmitter.removeAllListeners`
+     *
+     * If all 'data' event handlers are removed, and they were the last consumer
+     * (ie, there are no pipe destinations), then the flow of data will stop
+     * until there is another consumer or {@link Minipass#resume} is explicitly
+     * called.
+     */
+    removeAllListeners(ev) {
+        const ret = super.removeAllListeners(ev);
+        if (ev === 'data' || ev === undefined) {
+            this[DATALISTENERS] = 0;
+            if (!this[DISCARDED] && !this[PIPES].length) {
+                this[FLOWING] = false;
+            }
+        }
+        return ret;
+    }
+    /**
+     * true if the 'end' event has been emitted
+     */
+    get emittedEnd() {
+        return this[EMITTED_END];
+    }
+    [MAYBE_EMIT_END]() {
+        if (!this[EMITTING_END] &&
+            !this[EMITTED_END] &&
+            !this[DESTROYED] &&
+            this[BUFFER].length === 0 &&
+            this[EOF]) {
+            this[EMITTING_END] = true;
+            this.emit('end');
+            this.emit('prefinish');
+            this.emit('finish');
+            if (this[CLOSED])
+                this.emit('close');
+            this[EMITTING_END] = false;
+        }
+    }
+    /**
+     * Mostly identical to `EventEmitter.emit`, with the following
+     * behavior differences to prevent data loss and unnecessary hangs:
+     *
+     * If the stream has been destroyed, and the event is something other
+     * than 'close' or 'error', then `false` is returned and no handlers
+     * are called.
+     *
+     * If the event is 'end', and has already been emitted, then the event
+     * is ignored. If the stream is in a paused or non-flowing state, then
+     * the event will be deferred until data flow resumes. If the stream is
+     * async, then handlers will be called on the next tick rather than
+     * immediately.
+     *
+     * If the event is 'close', and 'end' has not yet been emitted, then
+     * the event will be deferred until after 'end' is emitted.
+     *
+     * If the event is 'error', and an AbortSignal was provided for the stream,
+     * and there are no listeners, then the event is ignored, matching the
+     * behavior of node core streams in the presense of an AbortSignal.
+     *
+     * If the event is 'finish' or 'prefinish', then all listeners will be
+     * removed after emitting the event, to prevent double-firing.
+     */
+    emit(ev, ...args) {
+        const data = args[0];
+        // error and close are only events allowed after calling destroy()
+        if (ev !== 'error' &&
+            ev !== 'close' &&
+            ev !== DESTROYED &&
+            this[DESTROYED]) {
+            return false;
+        }
+        else if (ev === 'data') {
+            return !this[OBJECTMODE] && !data
+                ? false
+                : this[ASYNC]
+                    ? (defer(() => this[EMITDATA](data)), true)
+                    : this[EMITDATA](data);
+        }
+        else if (ev === 'end') {
+            return this[EMITEND]();
+        }
+        else if (ev === 'close') {
+            this[CLOSED] = true;
+            // don't emit close before 'end' and 'finish'
+            if (!this[EMITTED_END] && !this[DESTROYED])
+                return false;
+            const ret = super.emit('close');
+            this.removeAllListeners('close');
+            return ret;
+        }
+        else if (ev === 'error') {
+            this[EMITTED_ERROR] = data;
+            super.emit(ERROR, data);
+            const ret = !this[SIGNAL] || this.listeners('error').length
+                ? super.emit('error', data)
+                : false;
+            this[MAYBE_EMIT_END]();
+            return ret;
+        }
+        else if (ev === 'resume') {
+            const ret = super.emit('resume');
+            this[MAYBE_EMIT_END]();
+            return ret;
+        }
+        else if (ev === 'finish' || ev === 'prefinish') {
+            const ret = super.emit(ev);
+            this.removeAllListeners(ev);
+            return ret;
+        }
+        // Some other unknown event
+        const ret = super.emit(ev, ...args);
+        this[MAYBE_EMIT_END]();
+        return ret;
+    }
+    [EMITDATA](data) {
+        for (const p of this[PIPES]) {
+            if (p.dest.write(data) === false)
+                this.pause();
+        }
+        const ret = this[DISCARDED] ? false : super.emit('data', data);
+        this[MAYBE_EMIT_END]();
+        return ret;
+    }
+    [EMITEND]() {
+        if (this[EMITTED_END])
+            return false;
+        this[EMITTED_END] = true;
+        this.readable = false;
+        return this[ASYNC]
+            ? (defer(() => this[EMITEND2]()), true)
+            : this[EMITEND2]();
+    }
+    [EMITEND2]() {
+        if (this[DECODER]) {
+            const data = this[DECODER].end();
+            if (data) {
+                for (const p of this[PIPES]) {
+                    p.dest.write(data);
+                }
+                if (!this[DISCARDED])
+                    super.emit('data', data);
+            }
+        }
+        for (const p of this[PIPES]) {
+            p.end();
+        }
+        const ret = super.emit('end');
+        this.removeAllListeners('end');
+        return ret;
+    }
+    /**
+     * Return a Promise that resolves to an array of all emitted data once
+     * the stream ends.
+     */
+    async collect() {
+        const buf = Object.assign([], {
+            dataLength: 0,
+        });
+        if (!this[OBJECTMODE])
+            buf.dataLength = 0;
+        // set the promise first, in case an error is raised
+        // by triggering the flow here.
+        const p = this.promise();
+        this.on('data', c => {
+            buf.push(c);
+            if (!this[OBJECTMODE])
+                buf.dataLength += c.length;
+        });
+        await p;
+        return buf;
+    }
+    /**
+     * Return a Promise that resolves to the concatenation of all emitted data
+     * once the stream ends.
+     *
+     * Not allowed on objectMode streams.
+     */
+    async concat() {
+        if (this[OBJECTMODE]) {
+            throw new Error('cannot concat in objectMode');
+        }
+        const buf = await this.collect();
+        return (this[ENCODING]
+            ? buf.join('')
+            : Buffer.concat(buf, buf.dataLength));
+    }
+    /**
+     * Return a void Promise that resolves once the stream ends.
+     */
+    async promise() {
+        return new Promise((resolve, reject) => {
+            this.on(DESTROYED, () => reject(new Error('stream destroyed')));
+            this.on('error', er => reject(er));
+            this.on('end', () => resolve());
+        });
+    }
+    /**
+     * Asynchronous `for await of` iteration.
+     *
+     * This will continue emitting all chunks until the stream terminates.
+     */
+    [Symbol.asyncIterator]() {
+        // set this up front, in case the consumer doesn't call next()
+        // right away.
+        this[DISCARDED] = false;
+        let stopped = false;
+        const stop = async () => {
+            this.pause();
+            stopped = true;
+            return { value: undefined, done: true };
+        };
+        const next = () => {
+            if (stopped)
+                return stop();
+            const res = this.read();
+            if (res !== null)
+                return Promise.resolve({ done: false, value: res });
+            if (this[EOF])
+                return stop();
+            let resolve;
+            let reject;
+            const onerr = (er) => {
+                this.off('data', ondata);
+                this.off('end', onend);
+                this.off(DESTROYED, ondestroy);
+                stop();
+                reject(er);
+            };
+            const ondata = (value) => {
+                this.off('error', onerr);
+                this.off('end', onend);
+                this.off(DESTROYED, ondestroy);
+                this.pause();
+                resolve({ value, done: !!this[EOF] });
+            };
+            const onend = () => {
+                this.off('error', onerr);
+                this.off('data', ondata);
+                this.off(DESTROYED, ondestroy);
+                stop();
+                resolve({ done: true, value: undefined });
+            };
+            const ondestroy = () => onerr(new Error('stream destroyed'));
+            return new Promise((res, rej) => {
+                reject = rej;
+                resolve = res;
+                this.once(DESTROYED, ondestroy);
+                this.once('error', onerr);
+                this.once('end', onend);
+                this.once('data', ondata);
+            });
+        };
+        return {
+            next,
+            throw: stop,
+            return: stop,
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        };
+    }
+    /**
+     * Synchronous `for of` iteration.
+     *
+     * The iteration will terminate when the internal buffer runs out, even
+     * if the stream has not yet terminated.
+     */
+    [Symbol.iterator]() {
+        // set this up front, in case the consumer doesn't call next()
+        // right away.
+        this[DISCARDED] = false;
+        let stopped = false;
+        const stop = () => {
+            this.pause();
+            this.off(ERROR, stop);
+            this.off(DESTROYED, stop);
+            this.off('end', stop);
+            stopped = true;
+            return { done: true, value: undefined };
+        };
+        const next = () => {
+            if (stopped)
+                return stop();
+            const value = this.read();
+            return value === null ? stop() : { done: false, value };
+        };
+        this.once('end', stop);
+        this.once(ERROR, stop);
+        this.once(DESTROYED, stop);
+        return {
+            next,
+            throw: stop,
+            return: stop,
+            [Symbol.iterator]() {
+                return this;
+            },
+        };
+    }
+    /**
+     * Destroy a stream, preventing it from being used for any further purpose.
+     *
+     * If the stream has a `close()` method, then it will be called on
+     * destruction.
+     *
+     * After destruction, any attempt to write data, read data, or emit most
+     * events will be ignored.
+     *
+     * If an error argument is provided, then it will be emitted in an
+     * 'error' event.
+     */
+    destroy(er) {
+        if (this[DESTROYED]) {
+            if (er)
+                this.emit('error', er);
+            else
+                this.emit(DESTROYED);
+            return this;
+        }
+        this[DESTROYED] = true;
+        this[DISCARDED] = true;
+        // throw away all buffered data, it's never coming out
+        this[BUFFER].length = 0;
+        this[BUFFERLENGTH] = 0;
+        const wc = this;
+        if (typeof wc.close === 'function' && !this[CLOSED])
+            wc.close();
+        if (er)
+            this.emit('error', er);
+        // if no error to emit, still reject pending promises
+        else
+            this.emit(DESTROYED);
+        return this;
+    }
+    /**
+     * Alias for {@link isStream}
+     *
+     * Former export location, maintained for backwards compatibility.
+     *
+     * @deprecated
+     */
+    static get isStream() {
+        return exports.isStream;
+    }
+}
+exports.Minipass = Minipass;
+//# sourceMappingURL=index.js.map
 
 /***/ })
 
