@@ -35,7 +35,7 @@ const glob = __importStar(__nccwpck_require__(8090));
 const rimraf = __importStar(__nccwpck_require__(9633));
 async function run() {
     try {
-        let gradleUserHome = process.env.GRADLE_USER_HOME || '~/.gradle';
+        const gradleUserHome = process.env.GRADLE_USER_HOME || '~/.gradle';
         const globber = await glob.create(gradleUserHome + '/wrapper/dists/*/*/*.zip');
         for await (const file of globber.globGenerator()) {
             core.info(`Removing ${file}`);

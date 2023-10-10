@@ -6,7 +6,7 @@ import * as rimraf from 'rimraf'
 
 async function run(): Promise<void> {
     try {
-        let gradleUserHome = process.env.GRADLE_USER_HOME || '~/.gradle'
+        const gradleUserHome = process.env.GRADLE_USER_HOME || '~/.gradle'
         const globber = await glob.create(gradleUserHome + '/wrapper/dists/*/*/*.zip')
         for await (const file of globber.globGenerator()) {
             core.info(`Removing ${file}`)
