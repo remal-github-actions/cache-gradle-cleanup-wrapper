@@ -11157,7 +11157,7 @@ exports.readdirSync = readdirSync;
 const chmod = (path, mode) => new Promise((res, rej) => fs_1.default.chmod(path, mode, (er, ...d) => (er ? rej(er) : res(...d))));
 const mkdir = (path, options) => new Promise((res, rej) => fs_1.default.mkdir(path, options, (er, made) => (er ? rej(er) : res(made))));
 const readdir = (path) => new Promise((res, rej) => fs_1.default.readdir(path, { withFileTypes: true }, (er, data) => er ? rej(er) : res(data)));
-const rename = (oldPath, newPath) => new Promise((res, rej) => fs_1.default.rename(oldPath, newPath, (er, ...d) => (er ? rej(er) : res(...d))));
+const rename = (oldPath, newPath) => new Promise((res, rej) => fs_1.default.rename(oldPath, newPath, (er, ...d) => er ? rej(er) : res(...d)));
 const rm = (path, options) => new Promise((res, rej) => fs_1.default.rm(path, options, (er, ...d) => (er ? rej(er) : res(...d))));
 const rmdir = (path) => new Promise((res, rej) => fs_1.default.rmdir(path, (er, ...d) => (er ? rej(er) : res(...d))));
 const stat = (path) => new Promise((res, rej) => fs_1.default.stat(path, (er, data) => (er ? rej(er) : res(data))));
@@ -11266,7 +11266,9 @@ exports.moveRemoveSync = wrapSync(rimraf_move_remove_js_1.rimrafMoveRemoveSync);
 exports.moveRemove = Object.assign(wrap(rimraf_move_remove_js_1.rimrafMoveRemove), {
     sync: exports.moveRemoveSync,
 });
-exports.rimrafSync = wrapSync((path, opt) => (0, use_native_js_1.useNativeSync)(opt) ? (0, rimraf_native_js_1.rimrafNativeSync)(path, opt) : (0, rimraf_manual_js_1.rimrafManualSync)(path, opt));
+exports.rimrafSync = wrapSync((path, opt) => (0, use_native_js_1.useNativeSync)(opt) ?
+    (0, rimraf_native_js_1.rimrafNativeSync)(path, opt)
+    : (0, rimraf_manual_js_1.rimrafManualSync)(path, opt));
 exports.sync = exports.rimrafSync;
 const rimraf_ = wrap((path, opt) => (0, use_native_js_1.useNative)(opt) ? (0, rimraf_native_js_1.rimrafNative)(path, opt) : (0, rimraf_manual_js_1.rimrafManual)(path, opt));
 exports.rimraf = Object.assign(rimraf_, {
@@ -11320,12 +11322,12 @@ const optArgT = (opt) => {
     if (!glob) {
         return options;
     }
-    const globOpt = glob === true
-        ? opt.signal
-            ? { signal: opt.signal }
+    const globOpt = glob === true ?
+        opt.signal ?
+            { signal: opt.signal }
             : {}
-        : opt.signal
-            ? {
+        : opt.signal ?
+            {
                 signal: opt.signal,
                 ...glob,
             }
@@ -11365,10 +11367,8 @@ const pathArg = (path, opt = {}) => {
     const type = typeof path;
     if (type !== 'string') {
         const ctor = path && type === 'object' && path.constructor;
-        const received = ctor && ctor.name
-            ? `an instance of ${ctor.name}`
-            : type === 'object'
-                ? (0, util_1.inspect)(path)
+        const received = ctor && ctor.name ? `an instance of ${ctor.name}`
+            : type === 'object' ? (0, util_1.inspect)(path)
                 : `type ${type} ${path}`;
         const msg = 'The "path" argument must be of type string. ' + `Received ${received}`;
         throw Object.assign(new TypeError(msg), {
@@ -12109,11 +12109,11 @@ const [major = 0, minor = 0] = versArr.map(v => parseInt(v, 10));
 const hasNative = major > 14 || (major === 14 && minor >= 14);
 // we do NOT use native by default on Windows, because Node's native
 // rm implementation is less advanced.  Change this code if that changes.
-exports.useNative = !hasNative || platform_js_1.default === 'win32'
-    ? () => false
+exports.useNative = !hasNative || platform_js_1.default === 'win32' ?
+    () => false
     : opt => !opt?.signal && !opt?.filter;
-exports.useNativeSync = !hasNative || platform_js_1.default === 'win32'
-    ? () => false
+exports.useNativeSync = !hasNative || platform_js_1.default === 'win32' ?
+    () => false
     : opt => !opt?.signal && !opt?.filter;
 //# sourceMappingURL=use-native.js.map
 
