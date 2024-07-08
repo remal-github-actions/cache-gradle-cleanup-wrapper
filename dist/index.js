@@ -4083,216 +4083,6 @@ function range(a, b, str) {
 
 /***/ }),
 
-/***/ 3717:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-var balanced = __nccwpck_require__(9417);
-
-module.exports = expandTop;
-
-var escSlash = '\0SLASH'+Math.random()+'\0';
-var escOpen = '\0OPEN'+Math.random()+'\0';
-var escClose = '\0CLOSE'+Math.random()+'\0';
-var escComma = '\0COMMA'+Math.random()+'\0';
-var escPeriod = '\0PERIOD'+Math.random()+'\0';
-
-function numeric(str) {
-  return parseInt(str, 10) == str
-    ? parseInt(str, 10)
-    : str.charCodeAt(0);
-}
-
-function escapeBraces(str) {
-  return str.split('\\\\').join(escSlash)
-            .split('\\{').join(escOpen)
-            .split('\\}').join(escClose)
-            .split('\\,').join(escComma)
-            .split('\\.').join(escPeriod);
-}
-
-function unescapeBraces(str) {
-  return str.split(escSlash).join('\\')
-            .split(escOpen).join('{')
-            .split(escClose).join('}')
-            .split(escComma).join(',')
-            .split(escPeriod).join('.');
-}
-
-
-// Basically just str.split(","), but handling cases
-// where we have nested braced sections, which should be
-// treated as individual members, like {a,{b,c},d}
-function parseCommaParts(str) {
-  if (!str)
-    return [''];
-
-  var parts = [];
-  var m = balanced('{', '}', str);
-
-  if (!m)
-    return str.split(',');
-
-  var pre = m.pre;
-  var body = m.body;
-  var post = m.post;
-  var p = pre.split(',');
-
-  p[p.length-1] += '{' + body + '}';
-  var postParts = parseCommaParts(post);
-  if (post.length) {
-    p[p.length-1] += postParts.shift();
-    p.push.apply(p, postParts);
-  }
-
-  parts.push.apply(parts, p);
-
-  return parts;
-}
-
-function expandTop(str) {
-  if (!str)
-    return [];
-
-  // I don't know why Bash 4.3 does this, but it does.
-  // Anything starting with {} will have the first two bytes preserved
-  // but *only* at the top level, so {},a}b will not expand to anything,
-  // but a{},b}c will be expanded to [a}c,abc].
-  // One could argue that this is a bug in Bash, but since the goal of
-  // this module is to match Bash's rules, we escape a leading {}
-  if (str.substr(0, 2) === '{}') {
-    str = '\\{\\}' + str.substr(2);
-  }
-
-  return expand(escapeBraces(str), true).map(unescapeBraces);
-}
-
-function embrace(str) {
-  return '{' + str + '}';
-}
-function isPadded(el) {
-  return /^-?0\d/.test(el);
-}
-
-function lte(i, y) {
-  return i <= y;
-}
-function gte(i, y) {
-  return i >= y;
-}
-
-function expand(str, isTop) {
-  var expansions = [];
-
-  var m = balanced('{', '}', str);
-  if (!m) return [str];
-
-  // no need to expand pre, since it is guaranteed to be free of brace-sets
-  var pre = m.pre;
-  var post = m.post.length
-    ? expand(m.post, false)
-    : [''];
-
-  if (/\$$/.test(m.pre)) {    
-    for (var k = 0; k < post.length; k++) {
-      var expansion = pre+ '{' + m.body + '}' + post[k];
-      expansions.push(expansion);
-    }
-  } else {
-    var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
-    var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
-    var isSequence = isNumericSequence || isAlphaSequence;
-    var isOptions = m.body.indexOf(',') >= 0;
-    if (!isSequence && !isOptions) {
-      // {a},b}
-      if (m.post.match(/,.*\}/)) {
-        str = m.pre + '{' + m.body + escClose + m.post;
-        return expand(str);
-      }
-      return [str];
-    }
-
-    var n;
-    if (isSequence) {
-      n = m.body.split(/\.\./);
-    } else {
-      n = parseCommaParts(m.body);
-      if (n.length === 1) {
-        // x{{a,b}}y ==> x{a}y x{b}y
-        n = expand(n[0], false).map(embrace);
-        if (n.length === 1) {
-          return post.map(function(p) {
-            return m.pre + n[0] + p;
-          });
-        }
-      }
-    }
-
-    // at this point, n is the parts, and we know it's not a comma set
-    // with a single entry.
-    var N;
-
-    if (isSequence) {
-      var x = numeric(n[0]);
-      var y = numeric(n[1]);
-      var width = Math.max(n[0].length, n[1].length)
-      var incr = n.length == 3
-        ? Math.abs(numeric(n[2]))
-        : 1;
-      var test = lte;
-      var reverse = y < x;
-      if (reverse) {
-        incr *= -1;
-        test = gte;
-      }
-      var pad = n.some(isPadded);
-
-      N = [];
-
-      for (var i = x; test(i, y); i += incr) {
-        var c;
-        if (isAlphaSequence) {
-          c = String.fromCharCode(i);
-          if (c === '\\')
-            c = '';
-        } else {
-          c = String(i);
-          if (pad) {
-            var need = width - c.length;
-            if (need > 0) {
-              var z = new Array(need + 1).join('0');
-              if (i < 0)
-                c = '-' + z + c.slice(1);
-              else
-                c = z + c;
-            }
-          }
-        }
-        N.push(c);
-      }
-    } else {
-      N = [];
-
-      for (var j = 0; j < n.length; j++) {
-        N.push.apply(N, expand(n[j], false));
-      }
-    }
-
-    for (var j = 0; j < N.length; j++) {
-      for (var k = 0; k < post.length; k++) {
-        var expansion = pre + N[j] + post[k];
-        if (!isTop || isSequence || expansion)
-          expansions.push(expansion);
-      }
-    }
-  }
-
-  return expansions;
-}
-
-
-
-/***/ }),
-
 /***/ 6891:
 /***/ ((module) => {
 
@@ -6433,14 +6223,6 @@ module.exports = require("fs");
 
 /***/ }),
 
-/***/ 3292:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("fs/promises");
-
-/***/ }),
-
 /***/ 3685:
 /***/ ((module) => {
 
@@ -6462,6 +6244,62 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 5673:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:events");
+
+/***/ }),
+
+/***/ 7561:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:fs");
+
+/***/ }),
+
+/***/ 3977:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:fs/promises");
+
+/***/ }),
+
+/***/ 9411:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:path");
+
+/***/ }),
+
+/***/ 4492:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:stream");
+
+/***/ }),
+
+/***/ 6915:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:string_decoder");
+
+/***/ }),
+
+/***/ 1041:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:url");
 
 /***/ }),
 
@@ -6489,27 +6327,11 @@ module.exports = require("stream");
 
 /***/ }),
 
-/***/ 1576:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("string_decoder");
-
-/***/ }),
-
 /***/ 4404:
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("tls");
-
-/***/ }),
-
-/***/ 7310:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("url");
 
 /***/ }),
 
@@ -6521,7 +6343,7 @@ module.exports = require("util");
 
 /***/ }),
 
-/***/ 9569:
+/***/ 1081:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -6551,16 +6373,16 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PathScurry = exports.Path = exports.PathScurryDarwin = exports.PathScurryPosix = exports.PathScurryWin32 = exports.PathScurryBase = exports.PathPosix = exports.PathWin32 = exports.PathBase = exports.ChildrenCache = exports.ResolveCache = void 0;
-const lru_cache_1 = __nccwpck_require__(7433);
-const path_1 = __nccwpck_require__(1017);
-const url_1 = __nccwpck_require__(7310);
-const actualFS = __importStar(__nccwpck_require__(7147));
+const lru_cache_1 = __nccwpck_require__(6091);
+const node_path_1 = __nccwpck_require__(9411);
+const node_url_1 = __nccwpck_require__(1041);
 const fs_1 = __nccwpck_require__(7147);
+const actualFS = __importStar(__nccwpck_require__(7561));
 const realpathSync = fs_1.realpathSync.native;
 // TODO: test perf of fs/promises realpath vs realpathCB,
 // since the promises one uses realpath.native
-const promises_1 = __nccwpck_require__(3292);
-const minipass_1 = __nccwpck_require__(2425);
+const promises_1 = __nccwpck_require__(3977);
+const minipass_1 = __nccwpck_require__(3852);
 const defaultFS = {
     lstatSync: fs_1.lstatSync,
     readdir: fs_1.readdir,
@@ -6575,8 +6397,8 @@ const defaultFS = {
     },
 };
 // if they just gave us require('fs') then use our default
-const fsFromOption = (fsOption) => !fsOption || fsOption === defaultFS || fsOption === actualFS
-    ? defaultFS
+const fsFromOption = (fsOption) => !fsOption || fsOption === defaultFS || fsOption === actualFS ?
+    defaultFS
     : {
         ...defaultFS,
         ...fsOption,
@@ -6602,35 +6424,28 @@ const IFMT = 0b1111;
 // mask to unset low 4 bits
 const IFMT_UNKNOWN = ~IFMT;
 // set after successfully calling readdir() and getting entries.
-const READDIR_CALLED = 16;
+const READDIR_CALLED = 0b0000_0001_0000;
 // set after a successful lstat()
-const LSTAT_CALLED = 32;
+const LSTAT_CALLED = 0b0000_0010_0000;
 // set if an entry (or one of its parents) is definitely not a dir
-const ENOTDIR = 64;
+const ENOTDIR = 0b0000_0100_0000;
 // set if an entry (or one of its parents) does not exist
 // (can also be set on lstat errors like EACCES or ENAMETOOLONG)
-const ENOENT = 128;
+const ENOENT = 0b0000_1000_0000;
 // cannot have child entries -- also verify &IFMT is either IFDIR or IFLNK
 // set if we fail to readlink
-const ENOREADLINK = 256;
+const ENOREADLINK = 0b0001_0000_0000;
 // set if we know realpath() will fail
-const ENOREALPATH = 512;
+const ENOREALPATH = 0b0010_0000_0000;
 const ENOCHILD = ENOTDIR | ENOENT | ENOREALPATH;
-const TYPEMASK = 1023;
-const entToType = (s) => s.isFile()
-    ? IFREG
-    : s.isDirectory()
-        ? IFDIR
-        : s.isSymbolicLink()
-            ? IFLNK
-            : s.isCharacterDevice()
-                ? IFCHR
-                : s.isBlockDevice()
-                    ? IFBLK
-                    : s.isSocket()
-                        ? IFSOCK
-                        : s.isFIFO()
-                            ? IFIFO
+const TYPEMASK = 0b0011_1111_1111;
+const entToType = (s) => s.isFile() ? IFREG
+    : s.isDirectory() ? IFDIR
+        : s.isSymbolicLink() ? IFLNK
+            : s.isCharacterDevice() ? IFCHR
+                : s.isBlockDevice() ? IFBLK
+                    : s.isSocket() ? IFSOCK
+                        : s.isFIFO() ? IFIFO
                             : UNKNOWN;
 // normalize unicode path names
 const normalizeCache = new Map();
@@ -6734,6 +6549,11 @@ class PathBase {
      * @internal
      */
     nocase;
+    /**
+     * boolean indicating that this path is the current working directory
+     * of the PathScurry collection that contains it.
+     */
+    isCWD = false;
     // potential default fs override
     #fs;
     // Stats fields
@@ -6821,13 +6641,21 @@ class PathBase {
     #realpath;
     /**
      * This property is for compatibility with the Dirent class as of
-     * Node v20, where Dirent['path'] refers to the path of the directory
-     * that was passed to readdir.  So, somewhat counterintuitively, this
-     * property refers to the *parent* path, not the path object itself.
-     * For root entries, it's the path to the entry itself.
+     * Node v20, where Dirent['parentPath'] refers to the path of the
+     * directory that was passed to readdir. For root entries, it's the path
+     * to the entry itself.
+     */
+    get parentPath() {
+        return (this.parent || this).fullpath();
+    }
+    /**
+     * Deprecated alias for Dirent['parentPath'] Somewhat counterintuitively,
+     * this property refers to the *parent* path, not the path object itself.
+     *
+     * @deprecated
      */
     get path() {
-        return (this.parent || this).fullpath();
+        return this.parentPath;
     }
     /**
      * Do not create new Path objects directly.  They should always be accessed
@@ -6882,8 +6710,8 @@ class PathBase {
         const rootPath = this.getRootString(path);
         const dir = path.substring(rootPath.length);
         const dirParts = dir.split(this.splitSep);
-        const result = rootPath
-            ? this.getRoot(rootPath).#resolveParts(dirParts)
+        const result = rootPath ?
+            this.getRoot(rootPath).#resolveParts(dirParts)
             : this.#resolveParts(dirParts);
         return result;
     }
@@ -6934,9 +6762,7 @@ class PathBase {
         }
         // find the child
         const children = this.children();
-        const name = this.nocase
-            ? normalizeNocase(pathPart)
-            : normalize(pathPart);
+        const name = this.nocase ? normalizeNocase(pathPart) : normalize(pathPart);
         for (const p of children) {
             if (p.#matchName === name) {
                 return p;
@@ -6946,9 +6772,7 @@ class PathBase {
         // actually exist.  If we know the parent isn't a dir, then
         // in fact it CAN'T exist.
         const s = this.parent ? this.sep : '';
-        const fullpath = this.#fullpath
-            ? this.#fullpath + s + pathPart
-            : undefined;
+        const fullpath = this.#fullpath ? this.#fullpath + s + pathPart : undefined;
         const pchild = this.newChild(pathPart, UNKNOWN, {
             ...opts,
             parent: this,
@@ -6967,6 +6791,8 @@ class PathBase {
      * the cwd, then this ends up being equivalent to the fullpath()
      */
     relative() {
+        if (this.isCWD)
+            return '';
         if (this.#relative !== undefined) {
             return this.#relative;
         }
@@ -6987,6 +6813,8 @@ class PathBase {
     relativePosix() {
         if (this.sep === '/')
             return this.relative();
+        if (this.isCWD)
+            return '';
         if (this.#relativePosix !== undefined)
             return this.#relativePosix;
         const name = this.name;
@@ -7052,23 +6880,15 @@ class PathBase {
         return this[`is${type}`]();
     }
     getType() {
-        return this.isUnknown()
-            ? 'Unknown'
-            : this.isDirectory()
-                ? 'Directory'
-                : this.isFile()
-                    ? 'File'
-                    : this.isSymbolicLink()
-                        ? 'SymbolicLink'
-                        : this.isFIFO()
-                            ? 'FIFO'
-                            : this.isCharacterDevice()
-                                ? 'CharacterDevice'
-                                : this.isBlockDevice()
-                                    ? 'BlockDevice'
-                                    : /* c8 ignore start */ this.isSocket()
-                                        ? 'Socket'
-                                        : 'Unknown';
+        return (this.isUnknown() ? 'Unknown'
+            : this.isDirectory() ? 'Directory'
+                : this.isFile() ? 'File'
+                    : this.isSymbolicLink() ? 'SymbolicLink'
+                        : this.isFIFO() ? 'FIFO'
+                            : this.isCharacterDevice() ? 'CharacterDevice'
+                                : this.isBlockDevice() ? 'BlockDevice'
+                                    : /* c8 ignore start */ this.isSocket() ? 'Socket'
+                                        : 'Unknown');
         /* c8 ignore stop */
     }
     /**
@@ -7202,8 +7022,8 @@ class PathBase {
      * directly.
      */
     isNamed(n) {
-        return !this.nocase
-            ? this.#matchName === normalize(n)
+        return !this.nocase ?
+            this.#matchName === normalize(n)
             : this.#matchName === normalizeNocase(n);
     }
     /**
@@ -7230,7 +7050,7 @@ class PathBase {
         /* c8 ignore stop */
         try {
             const read = await this.#fs.promises.readlink(this.fullpath());
-            const linkTarget = this.parent.resolve(read);
+            const linkTarget = (await this.parent.realpath())?.resolve(read);
             if (linkTarget) {
                 return (this.#linkTarget = linkTarget);
             }
@@ -7259,7 +7079,7 @@ class PathBase {
         /* c8 ignore stop */
         try {
             const read = this.#fs.readlinkSync(this.fullpath());
-            const linkTarget = this.parent.resolve(read);
+            const linkTarget = this.parent.realpathSync()?.resolve(read);
             if (linkTarget) {
                 return (this.#linkTarget = linkTarget);
             }
@@ -7274,7 +7094,9 @@ class PathBase {
         this.#type |= READDIR_CALLED;
         // mark all remaining provisional children as ENOENT
         for (let p = children.provisional; p < children.length; p++) {
-            children[p].#markENOENT();
+            const c = children[p];
+            if (c)
+                c.#markENOENT();
         }
     }
     #markENOENT() {
@@ -7378,9 +7200,7 @@ class PathBase {
     #readdirMaybePromoteChild(e, c) {
         for (let p = c.provisional; p < c.length; p++) {
             const pchild = c[p];
-            const name = this.nocase
-                ? normalizeNocase(e.name)
-                : normalize(e.name);
+            const name = this.nocase ? normalizeNocase(e.name) : normalize(e.name);
             if (name !== pchild.#matchName) {
                 continue;
             }
@@ -7679,6 +7499,8 @@ class PathBase {
     [setAsCwd](oldCwd) {
         if (oldCwd === this)
             return;
+        oldCwd.isCWD = false;
+        this.isCWD = true;
         const changed = new Set([]);
         let rp = [];
         let p = this;
@@ -7733,7 +7555,7 @@ class PathWin32 extends PathBase {
      * @internal
      */
     getRootString(path) {
-        return path_1.win32.parse(path).root;
+        return node_path_1.win32.parse(path).root;
     }
     /**
      * @internal
@@ -7855,7 +7677,7 @@ class PathScurryBase {
     constructor(cwd = process.cwd(), pathImpl, sep, { nocase, childrenCacheSize = 16 * 1024, fs = defaultFS, } = {}) {
         this.#fs = fsFromOption(fs);
         if (cwd instanceof URL || cwd.startsWith('file://')) {
-            cwd = (0, url_1.fileURLToPath)(cwd);
+            cwd = (0, node_url_1.fileURLToPath)(cwd);
         }
         // resolve and split root, and then add to the store.
         // this is the only time we call path.resolve()
@@ -8444,7 +8266,7 @@ class PathScurryWin32 extends PathScurryBase {
     sep = '\\';
     constructor(cwd = process.cwd(), opts = {}) {
         const { nocase = true } = opts;
-        super(cwd, path_1.win32, '\\', { ...opts, nocase });
+        super(cwd, node_path_1.win32, '\\', { ...opts, nocase });
         this.nocase = nocase;
         for (let p = this.cwd; p; p = p.parent) {
             p.nocase = this.nocase;
@@ -8457,7 +8279,7 @@ class PathScurryWin32 extends PathScurryBase {
         // if the path starts with a single separator, it's not a UNC, and we'll
         // just get separator as the root, and driveFromUNC will return \
         // In that case, mount \ on the root from the cwd.
-        return path_1.win32.parse(dir).root.toUpperCase();
+        return node_path_1.win32.parse(dir).root.toUpperCase();
     }
     /**
      * @internal
@@ -8487,7 +8309,7 @@ class PathScurryPosix extends PathScurryBase {
     sep = '/';
     constructor(cwd = process.cwd(), opts = {}) {
         const { nocase = false } = opts;
-        super(cwd, path_1.posix, '/', { ...opts, nocase });
+        super(cwd, node_path_1.posix, '/', { ...opts, nocase });
         this.nocase = nocase;
     }
     /**
@@ -8537,16 +8359,14 @@ exports.Path = process.platform === 'win32' ? PathWin32 : PathPosix;
  * {@link PathScurryWin32} on Windows systems, {@link PathScurryDarwin} on
  * Darwin (macOS) systems, {@link PathScurryPosix} on all others.
  */
-exports.PathScurry = process.platform === 'win32'
-    ? PathScurryWin32
-    : process.platform === 'darwin'
-        ? PathScurryDarwin
+exports.PathScurry = process.platform === 'win32' ? PathScurryWin32
+    : process.platform === 'darwin' ? PathScurryDarwin
         : PathScurryPosix;
 //# sourceMappingURL=index.js.map
 
 /***/ }),
 
-/***/ 7433:
+/***/ 6091:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -8682,21 +8502,26 @@ class Stack {
 /**
  * Default export, the thing you're using this module to get.
  *
- * All properties from the options object (with the exception of
- * {@link OptionsBase.max} and {@link OptionsBase.maxSize}) are added as
- * normal public members. (`max` and `maxBase` are read-only getters.)
- * Changing any of these will alter the defaults for subsequent method calls,
- * but is otherwise safe.
+ * The `K` and `V` types define the key and value types, respectively. The
+ * optional `FC` type defines the type of the `context` object passed to
+ * `cache.fetch()` and `cache.memo()`.
+ *
+ * Keys and values **must not** be `null` or `undefined`.
+ *
+ * All properties from the options object (with the exception of `max`,
+ * `maxSize`, `fetchMethod`, `memoMethod`, `dispose` and `disposeAfter`) are
+ * added as normal public members. (The listed options are read-only getters.)
+ *
+ * Changing any of these will alter the defaults for subsequent method calls.
  */
 class LRUCache {
-    // properties coming in from the options of these, only max and maxSize
-    // really *need* to be protected. The rest can be modified, as they just
-    // set defaults for various methods.
+    // options that cannot be changed without disaster
     #max;
     #maxSize;
     #dispose;
     #disposeAfter;
     #fetchMethod;
+    #memoMethod;
     /**
      * {@link LRUCache.OptionsBase.ttl}
      */
@@ -8842,6 +8667,9 @@ class LRUCache {
     get fetchMethod() {
         return this.#fetchMethod;
     }
+    get memoMethod() {
+        return this.#memoMethod;
+    }
     /**
      * {@link LRUCache.OptionsBase.dispose} (read-only)
      */
@@ -8855,7 +8683,7 @@ class LRUCache {
         return this.#disposeAfter;
     }
     constructor(options) {
-        const { max = 0, ttl, ttlResolution = 1, ttlAutopurge, updateAgeOnGet, updateAgeOnHas, allowStale, dispose, disposeAfter, noDisposeOnSet, noUpdateTTL, maxSize = 0, maxEntrySize = 0, sizeCalculation, fetchMethod, noDeleteOnFetchRejection, noDeleteOnStaleGet, allowStaleOnFetchRejection, allowStaleOnFetchAbort, ignoreFetchAbort, } = options;
+        const { max = 0, ttl, ttlResolution = 1, ttlAutopurge, updateAgeOnGet, updateAgeOnHas, allowStale, dispose, disposeAfter, noDisposeOnSet, noUpdateTTL, maxSize = 0, maxEntrySize = 0, sizeCalculation, fetchMethod, memoMethod, noDeleteOnFetchRejection, noDeleteOnStaleGet, allowStaleOnFetchRejection, allowStaleOnFetchAbort, ignoreFetchAbort, } = options;
         if (max !== 0 && !isPosInt(max)) {
             throw new TypeError('max option must be a nonnegative integer');
         }
@@ -8875,6 +8703,11 @@ class LRUCache {
                 throw new TypeError('sizeCalculation set to non-function');
             }
         }
+        if (memoMethod !== undefined &&
+            typeof memoMethod !== 'function') {
+            throw new TypeError('memoMethod must be a function if defined');
+        }
+        this.#memoMethod = memoMethod;
         if (fetchMethod !== undefined &&
             typeof fetchMethod !== 'function') {
             throw new TypeError('fetchMethod must be a function if specified');
@@ -8953,7 +8786,8 @@ class LRUCache {
         }
     }
     /**
-     * Return the remaining TTL time for a given entry key
+     * Return the number of ms left in the item's TTL. If item is not in cache,
+     * returns `0`. Returns `Infinity` if item is in cache without a defined TTL.
      */
     getRemainingTTL(key) {
         return this.#keyMap.has(key) ? Infinity : 0;
@@ -8969,7 +8803,7 @@ class LRUCache {
             if (ttl !== 0 && this.ttlAutopurge) {
                 const t = setTimeout(() => {
                     if (this.#isStale(index)) {
-                        this.delete(this.#keyList[index]);
+                        this.#delete(this.#keyList[index], 'expire');
                     }
                 }, ttl + 1);
                 // unref() not supported on all platforms
@@ -8987,6 +8821,9 @@ class LRUCache {
             if (ttls[index]) {
                 const ttl = ttls[index];
                 const start = starts[index];
+                /* c8 ignore next */
+                if (!ttl || !start)
+                    return;
                 status.ttl = ttl;
                 status.start = start;
                 status.now = cachedNow || getNow();
@@ -9018,16 +8855,16 @@ class LRUCache {
             }
             const ttl = ttls[index];
             const start = starts[index];
-            if (ttl === 0 || start === 0) {
+            if (!ttl || !start) {
                 return Infinity;
             }
             const age = (cachedNow || getNow()) - start;
             return ttl - age;
         };
         this.#isStale = index => {
-            return (ttls[index] !== 0 &&
-                starts[index] !== 0 &&
-                (cachedNow || getNow()) - starts[index] > ttls[index]);
+            const s = starts[index];
+            const t = ttls[index];
+            return !!t && !!s && (cachedNow || getNow()) - s > t;
         };
     }
     // conditionally set private methods related to TTL
@@ -9223,8 +9060,14 @@ class LRUCache {
         return this.entries();
     }
     /**
+     * A String value that is used in the creation of the default string
+     * description of an object. Called by the built-in method
+     * `Object.prototype.toString`.
+     */
+    [Symbol.toStringTag] = 'LRUCache';
+    /**
      * Find a value for which the supplied fn method returns a truthy value,
-     * similar to Array.find().  fn is called as fn(value, key, cache).
+     * similar to `Array.find()`. fn is called as `fn(value, key, cache)`.
      */
     find(fn, getOptions = {}) {
         for (const i of this.#indexes()) {
@@ -9240,10 +9083,15 @@ class LRUCache {
         }
     }
     /**
-     * Call the supplied function on each item in the cache, in order from
-     * most recently used to least recently used.  fn is called as
-     * fn(value, key, cache).  Does not update age or recenty of use.
-     * Does not iterate over stale values.
+     * Call the supplied function on each item in the cache, in order from most
+     * recently used to least recently used.
+     *
+     * `fn` is called as `fn(value, key, cache)`.
+     *
+     * If `thisp` is provided, function will be called in the `this`-context of
+     * the provided object, or the cache if no `thisp` object is provided.
+     *
+     * Does not update age or recenty of use, or iterate over stale values.
      */
     forEach(fn, thisp = this) {
         for (const i of this.#indexes()) {
@@ -9279,15 +9127,61 @@ class LRUCache {
         let deleted = false;
         for (const i of this.#rindexes({ allowStale: true })) {
             if (this.#isStale(i)) {
-                this.delete(this.#keyList[i]);
+                this.#delete(this.#keyList[i], 'expire');
                 deleted = true;
             }
         }
         return deleted;
     }
     /**
+     * Get the extended info about a given entry, to get its value, size, and
+     * TTL info simultaneously. Returns `undefined` if the key is not present.
+     *
+     * Unlike {@link LRUCache#dump}, which is designed to be portable and survive
+     * serialization, the `start` value is always the current timestamp, and the
+     * `ttl` is a calculated remaining time to live (negative if expired).
+     *
+     * Always returns stale values, if their info is found in the cache, so be
+     * sure to check for expirations (ie, a negative {@link LRUCache.Entry#ttl})
+     * if relevant.
+     */
+    info(key) {
+        const i = this.#keyMap.get(key);
+        if (i === undefined)
+            return undefined;
+        const v = this.#valList[i];
+        const value = this.#isBackgroundFetch(v)
+            ? v.__staleWhileFetching
+            : v;
+        if (value === undefined)
+            return undefined;
+        const entry = { value };
+        if (this.#ttls && this.#starts) {
+            const ttl = this.#ttls[i];
+            const start = this.#starts[i];
+            if (ttl && start) {
+                const remain = ttl - (perf.now() - start);
+                entry.ttl = remain;
+                entry.start = Date.now();
+            }
+        }
+        if (this.#sizes) {
+            entry.size = this.#sizes[i];
+        }
+        return entry;
+    }
+    /**
      * Return an array of [key, {@link LRUCache.Entry}] tuples which can be
-     * passed to cache.load()
+     * passed to {@link LRLUCache#load}.
+     *
+     * The `start` fields are calculated relative to a portable `Date.now()`
+     * timestamp, even if `performance.now()` is available.
+     *
+     * Stale entries are always included in the `dump`, even if
+     * {@link LRUCache.OptionsBase.allowStale} is false.
+     *
+     * Note: this returns an actual array, not a generator, so it can be more
+     * easily passed around.
      */
     dump() {
         const arr = [];
@@ -9316,8 +9210,12 @@ class LRUCache {
     }
     /**
      * Reset the cache and load in the items in entries in the order listed.
-     * Note that the shape of the resulting cache may be different if the
-     * same options are not used in both caches.
+     *
+     * The shape of the resulting cache may be different if the same options are
+     * not used in both caches.
+     *
+     * The `start` fields are assumed to be calculated relative to a portable
+     * `Date.now()` timestamp, even if `performance.now()` is available.
      */
     load(arr) {
         this.clear();
@@ -9340,6 +9238,30 @@ class LRUCache {
      *
      * Note: if `undefined` is specified as a value, this is an alias for
      * {@link LRUCache#delete}
+     *
+     * Fields on the {@link LRUCache.SetOptions} options param will override
+     * their corresponding values in the constructor options for the scope
+     * of this single `set()` operation.
+     *
+     * If `start` is provided, then that will set the effective start
+     * time for the TTL calculation. Note that this must be a previous
+     * value of `performance.now()` if supported, or a previous value of
+     * `Date.now()` if not.
+     *
+     * Options object may also include `size`, which will prevent
+     * calling the `sizeCalculation` function and just use the specified
+     * number if it is a positive integer, and `noDisposeOnSet` which
+     * will prevent calling a `dispose` function in the case of
+     * overwrites.
+     *
+     * If the `size` (or return value of `sizeCalculation`) for a given
+     * entry is greater than `maxEntrySize`, then the item will not be
+     * added to the cache.
+     *
+     * Will update the recency of the entry.
+     *
+     * If the value is `undefined`, then this is an alias for
+     * `cache.delete(key)`. `undefined` is never stored in the cache.
      */
     set(k, v, setOptions = {}) {
         if (v === undefined) {
@@ -9357,7 +9279,7 @@ class LRUCache {
                 status.maxEntrySizeExceeded = true;
             }
             // have to delete, in case something is there already.
-            this.delete(k);
+            this.#delete(k, 'set');
             return this;
         }
         let index = this.#size === 0 ? undefined : this.#keyMap.get(k);
@@ -9509,6 +9431,14 @@ class LRUCache {
      * Will return false if the item is stale, even though it is technically
      * in the cache.
      *
+     * Check if a key is in the cache, without updating the recency of
+     * use. Age is updated if {@link LRUCache.OptionsBase.updateAgeOnHas} is set
+     * to `true` in either the options or the constructor.
+     *
+     * Will return `false` if the item is stale, even though it is technically in
+     * the cache. The difference can be determined (if it matters) by using a
+     * `status` argument, and inspecting the `has` field.
+     *
      * Will not update item age unless
      * {@link LRUCache.OptionsBase.updateAgeOnHas} is set.
      */
@@ -9551,12 +9481,13 @@ class LRUCache {
     peek(k, peekOptions = {}) {
         const { allowStale = this.allowStale } = peekOptions;
         const index = this.#keyMap.get(k);
-        if (index !== undefined &&
-            (allowStale || !this.#isStale(index))) {
-            const v = this.#valList[index];
-            // either stale and allowed, or forcing a refresh of non-stale value
-            return this.#isBackgroundFetch(v) ? v.__staleWhileFetching : v;
+        if (index === undefined ||
+            (!allowStale && this.#isStale(index))) {
+            return;
         }
+        const v = this.#valList[index];
+        // either stale and allowed, or forcing a refresh of non-stale value
+        return this.#isBackgroundFetch(v) ? v.__staleWhileFetching : v;
     }
     #backgroundFetch(k, index, options, context) {
         const v = index === undefined ? undefined : this.#valList[index];
@@ -9599,7 +9530,7 @@ class LRUCache {
                         this.#valList[index] = bf.__staleWhileFetching;
                     }
                     else {
-                        this.delete(k);
+                        this.#delete(k, 'fetch');
                     }
                 }
                 else {
@@ -9628,7 +9559,7 @@ class LRUCache {
                 // the stale value is not removed from the cache when the fetch fails.
                 const del = !noDelete || bf.__staleWhileFetching === undefined;
                 if (del) {
-                    this.delete(k);
+                    this.#delete(k, 'fetch');
                 }
                 else if (!allowStaleAborted) {
                     // still replace the *promise* with the stale value,
@@ -9774,6 +9705,28 @@ class LRUCache {
             return staleVal ? p.__staleWhileFetching : (p.__returned = p);
         }
     }
+    async forceFetch(k, fetchOptions = {}) {
+        const v = await this.fetch(k, fetchOptions);
+        if (v === undefined)
+            throw new Error('fetch() returned undefined');
+        return v;
+    }
+    memo(k, memoOptions = {}) {
+        const memoMethod = this.#memoMethod;
+        if (!memoMethod) {
+            throw new Error('no memoMethod provided to constructor');
+        }
+        const { context, forceRefresh, ...options } = memoOptions;
+        const v = this.get(k, options);
+        if (!forceRefresh && v !== undefined)
+            return v;
+        const vv = memoMethod(k, v, {
+            options,
+            context,
+        });
+        this.set(k, vv, options);
+        return vv;
+    }
     /**
      * Return a value from the cache. Will update the recency of the cache
      * entry found.
@@ -9794,7 +9747,7 @@ class LRUCache {
                 // delete only if not an in-flight background fetch
                 if (!fetching) {
                     if (!noDeleteOnStaleGet) {
-                        this.delete(k);
+                        this.#delete(k, 'expire');
                     }
                     if (status && allowStale)
                         status.returnedStale = true;
@@ -9857,16 +9810,20 @@ class LRUCache {
     }
     /**
      * Deletes a key out of the cache.
+     *
      * Returns true if the key was deleted, false otherwise.
      */
     delete(k) {
+        return this.#delete(k, 'delete');
+    }
+    #delete(k, reason) {
         let deleted = false;
         if (this.#size !== 0) {
             const index = this.#keyMap.get(k);
             if (index !== undefined) {
                 deleted = true;
                 if (this.#size === 1) {
-                    this.clear();
+                    this.#clear(reason);
                 }
                 else {
                     this.#removeItemSize(index);
@@ -9876,10 +9833,10 @@ class LRUCache {
                     }
                     else if (this.#hasDispose || this.#hasDisposeAfter) {
                         if (this.#hasDispose) {
-                            this.#dispose?.(v, k, 'delete');
+                            this.#dispose?.(v, k, reason);
                         }
                         if (this.#hasDisposeAfter) {
-                            this.#disposed?.push([v, k, 'delete']);
+                            this.#disposed?.push([v, k, reason]);
                         }
                     }
                     this.#keyMap.delete(k);
@@ -9892,8 +9849,10 @@ class LRUCache {
                         this.#head = this.#next[index];
                     }
                     else {
-                        this.#next[this.#prev[index]] = this.#next[index];
-                        this.#prev[this.#next[index]] = this.#prev[index];
+                        const pi = this.#prev[index];
+                        this.#next[pi] = this.#next[index];
+                        const ni = this.#next[index];
+                        this.#prev[ni] = this.#prev[index];
                     }
                     this.#size--;
                     this.#free.push(index);
@@ -9913,6 +9872,9 @@ class LRUCache {
      * Clear the cache entirely, throwing away all values.
      */
     clear() {
+        return this.#clear('delete');
+    }
+    #clear(reason) {
         for (const index of this.#rindexes({ allowStale: true })) {
             const v = this.#valList[index];
             if (this.#isBackgroundFetch(v)) {
@@ -9921,10 +9883,10 @@ class LRUCache {
             else {
                 const k = this.#keyList[index];
                 if (this.#hasDispose) {
-                    this.#dispose?.(v, k, 'delete');
+                    this.#dispose?.(v, k, reason);
                 }
                 if (this.#hasDisposeAfter) {
-                    this.#disposed?.push([v, k, 'delete']);
+                    this.#disposed?.push([v, k, reason]);
                 }
             }
         }
@@ -9957,7 +9919,7 @@ exports.LRUCache = LRUCache;
 
 /***/ }),
 
-/***/ 2425:
+/***/ 3852:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -9973,9 +9935,9 @@ const proc = typeof process === 'object' && process
         stdout: null,
         stderr: null,
     };
-const events_1 = __nccwpck_require__(2361);
-const stream_1 = __importDefault(__nccwpck_require__(2781));
-const string_decoder_1 = __nccwpck_require__(1576);
+const node_events_1 = __nccwpck_require__(5673);
+const node_stream_1 = __importDefault(__nccwpck_require__(4492));
+const node_string_decoder_1 = __nccwpck_require__(6915);
 /**
  * Return true if the argument is a Minipass stream, Node stream, or something
  * else that Minipass can interact with.
@@ -9983,7 +9945,7 @@ const string_decoder_1 = __nccwpck_require__(1576);
 const isStream = (s) => !!s &&
     typeof s === 'object' &&
     (s instanceof Minipass ||
-        s instanceof stream_1.default ||
+        s instanceof node_stream_1.default ||
         (0, exports.isReadable)(s) ||
         (0, exports.isWritable)(s));
 exports.isStream = isStream;
@@ -9992,17 +9954,17 @@ exports.isStream = isStream;
  */
 const isReadable = (s) => !!s &&
     typeof s === 'object' &&
-    s instanceof events_1.EventEmitter &&
+    s instanceof node_events_1.EventEmitter &&
     typeof s.pipe === 'function' &&
     // node core Writable streams have a pipe() method, but it throws
-    s.pipe !== stream_1.default.Writable.prototype.pipe;
+    s.pipe !== node_stream_1.default.Writable.prototype.pipe;
 exports.isReadable = isReadable;
 /**
  * Return true if the argument is a valid {@link Minipass.Writable}
  */
 const isWritable = (s) => !!s &&
     typeof s === 'object' &&
-    s instanceof events_1.EventEmitter &&
+    s instanceof node_events_1.EventEmitter &&
     typeof s.write === 'function' &&
     typeof s.end === 'function';
 exports.isWritable = isWritable;
@@ -10109,7 +10071,7 @@ const isEncodingOptions = (o) => !o.objectMode && !!o.encoding && o.encoding !==
  * `Events` is the set of event handler signatures that this object
  * will emit, see {@link Minipass.Events}
  */
-class Minipass extends events_1.EventEmitter {
+class Minipass extends node_events_1.EventEmitter {
     [FLOWING] = false;
     [PAUSED] = false;
     [PIPES] = [];
@@ -10164,7 +10126,7 @@ class Minipass extends events_1.EventEmitter {
         }
         this[ASYNC] = !!options.async;
         this[DECODER] = this[ENCODING]
-            ? new string_decoder_1.StringDecoder(this[ENCODING])
+            ? new node_string_decoder_1.StringDecoder(this[ENCODING])
             : null;
         //@ts-ignore - private option for debugging and testing
         if (options && options.debugExposeBuffer === true) {
@@ -12126,17 +12088,17 @@ exports.useNativeSync = !hasNative || platform_js_1.default === 'win32' ?
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Glob = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
-const path_scurry_1 = __nccwpck_require__(9569);
-const url_1 = __nccwpck_require__(7310);
+const minimatch_1 = __nccwpck_require__(4835);
+const node_url_1 = __nccwpck_require__(1041);
+const path_scurry_1 = __nccwpck_require__(1081);
 const pattern_js_1 = __nccwpck_require__(3986);
 const walker_js_1 = __nccwpck_require__(2909);
 // if no process global, just call it linux.
 // so we default to case-sensitive, / separators
-const defaultPlatform = typeof process === 'object' &&
+const defaultPlatform = (typeof process === 'object' &&
     process &&
-    typeof process.platform === 'string'
-    ? process.platform
+    typeof process.platform === 'string') ?
+    process.platform
     : 'linux';
 /**
  * An object that can perform glob pattern traversals.
@@ -12166,6 +12128,7 @@ class Glob {
     signal;
     windowsPathsNoEscape;
     withFileTypes;
+    includeChildMatches;
     /**
      * The options provided to the constructor.
      */
@@ -12202,7 +12165,7 @@ class Glob {
             this.cwd = '';
         }
         else if (opts.cwd instanceof URL || opts.cwd.startsWith('file://')) {
-            opts.cwd = (0, url_1.fileURLToPath)(opts.cwd);
+            opts.cwd = (0, node_url_1.fileURLToPath)(opts.cwd);
         }
         this.cwd = opts.cwd || '';
         this.root = opts.root;
@@ -12211,6 +12174,7 @@ class Glob {
         this.noext = !!opts.noext;
         this.realpath = !!opts.realpath;
         this.absolute = opts.absolute;
+        this.includeChildMatches = opts.includeChildMatches !== false;
         this.noglobstar = !!opts.noglobstar;
         this.matchBase = !!opts.matchBase;
         this.maxDepth =
@@ -12225,7 +12189,8 @@ class Glob {
         }
         this.windowsPathsNoEscape =
             !!opts.windowsPathsNoEscape ||
-                opts.allowWindowsEscape === false;
+                opts.allowWindowsEscape ===
+                    false;
         if (this.windowsPathsNoEscape) {
             pattern = pattern.map(p => p.replace(/\\/g, '/'));
         }
@@ -12246,12 +12211,9 @@ class Glob {
             }
         }
         else {
-            const Scurry = opts.platform === 'win32'
-                ? path_scurry_1.PathScurryWin32
-                : opts.platform === 'darwin'
-                    ? path_scurry_1.PathScurryDarwin
-                    : opts.platform
-                        ? path_scurry_1.PathScurryPosix
+            const Scurry = opts.platform === 'win32' ? path_scurry_1.PathScurryWin32
+                : opts.platform === 'darwin' ? path_scurry_1.PathScurryDarwin
+                    : opts.platform ? path_scurry_1.PathScurryPosix
                         : path_scurry_1.PathScurry;
             this.scurry = new Scurry(this.cwd, {
                 nocase: opts.nocase,
@@ -12303,11 +12265,12 @@ class Glob {
         return [
             ...(await new walker_js_1.GlobWalker(this.patterns, this.scurry.cwd, {
                 ...this.opts,
-                maxDepth: this.maxDepth !== Infinity
-                    ? this.maxDepth + this.scurry.cwd.depth()
+                maxDepth: this.maxDepth !== Infinity ?
+                    this.maxDepth + this.scurry.cwd.depth()
                     : Infinity,
                 platform: this.platform,
                 nocase: this.nocase,
+                includeChildMatches: this.includeChildMatches,
             }).walk()),
         ];
     }
@@ -12315,32 +12278,35 @@ class Glob {
         return [
             ...new walker_js_1.GlobWalker(this.patterns, this.scurry.cwd, {
                 ...this.opts,
-                maxDepth: this.maxDepth !== Infinity
-                    ? this.maxDepth + this.scurry.cwd.depth()
+                maxDepth: this.maxDepth !== Infinity ?
+                    this.maxDepth + this.scurry.cwd.depth()
                     : Infinity,
                 platform: this.platform,
                 nocase: this.nocase,
+                includeChildMatches: this.includeChildMatches,
             }).walkSync(),
         ];
     }
     stream() {
         return new walker_js_1.GlobStream(this.patterns, this.scurry.cwd, {
             ...this.opts,
-            maxDepth: this.maxDepth !== Infinity
-                ? this.maxDepth + this.scurry.cwd.depth()
+            maxDepth: this.maxDepth !== Infinity ?
+                this.maxDepth + this.scurry.cwd.depth()
                 : Infinity,
             platform: this.platform,
             nocase: this.nocase,
+            includeChildMatches: this.includeChildMatches,
         }).stream();
     }
     streamSync() {
         return new walker_js_1.GlobStream(this.patterns, this.scurry.cwd, {
             ...this.opts,
-            maxDepth: this.maxDepth !== Infinity
-                ? this.maxDepth + this.scurry.cwd.depth()
+            maxDepth: this.maxDepth !== Infinity ?
+                this.maxDepth + this.scurry.cwd.depth()
                 : Infinity,
             platform: this.platform,
             nocase: this.nocase,
+            includeChildMatches: this.includeChildMatches,
         }).streamSync();
     }
     /**
@@ -12376,7 +12342,7 @@ exports.Glob = Glob;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.hasMagic = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
+const minimatch_1 = __nccwpck_require__(4835);
 /**
  * Return true if the patterns provided contain any magic glob characters,
  * given the options provided.
@@ -12414,12 +12380,12 @@ exports.hasMagic = hasMagic;
 // Ignores are always parsed in dot:true mode
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Ignore = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
+const minimatch_1 = __nccwpck_require__(4835);
 const pattern_js_1 = __nccwpck_require__(3986);
-const defaultPlatform = typeof process === 'object' &&
+const defaultPlatform = (typeof process === 'object' &&
     process &&
-    typeof process.platform === 'string'
-    ? process.platform
+    typeof process.platform === 'string') ?
+    process.platform
     : 'linux';
 /**
  * Class used to process ignored patterns
@@ -12429,12 +12395,15 @@ class Ignore {
     relativeChildren;
     absolute;
     absoluteChildren;
+    platform;
+    mmopts;
     constructor(ignored, { nobrace, nocase, noext, noglobstar, platform = defaultPlatform, }) {
         this.relative = [];
         this.absolute = [];
         this.relativeChildren = [];
         this.absoluteChildren = [];
-        const mmopts = {
+        this.platform = platform;
+        this.mmopts = {
             dot: true,
             nobrace,
             nocase,
@@ -12445,6 +12414,10 @@ class Ignore {
             nocomment: true,
             nonegate: true,
         };
+        for (const ign of ignored)
+            this.add(ign);
+    }
+    add(ign) {
         // this is a little weird, but it gives us a clean set of optimized
         // minimatch matchers, without getting tripped up if one of them
         // ends in /** inside a brace section, and it's only inefficient at
@@ -12457,30 +12430,34 @@ class Ignore {
         // for absolute-ness.
         // Yet another way, Minimatch could take an array of glob strings, and
         // a cwd option, and do the right thing.
-        for (const ign of ignored) {
-            const mm = new minimatch_1.Minimatch(ign, mmopts);
-            for (let i = 0; i < mm.set.length; i++) {
-                const parsed = mm.set[i];
-                const globParts = mm.globParts[i];
-                /* c8 ignore start */
-                if (!parsed || !globParts) {
-                    throw new Error('invalid pattern object');
-                }
-                /* c8 ignore stop */
-                const p = new pattern_js_1.Pattern(parsed, globParts, 0, platform);
-                const m = new minimatch_1.Minimatch(p.globString(), mmopts);
-                const children = globParts[globParts.length - 1] === '**';
-                const absolute = p.isAbsolute();
+        const mm = new minimatch_1.Minimatch(ign, this.mmopts);
+        for (let i = 0; i < mm.set.length; i++) {
+            const parsed = mm.set[i];
+            const globParts = mm.globParts[i];
+            /* c8 ignore start */
+            if (!parsed || !globParts) {
+                throw new Error('invalid pattern object');
+            }
+            // strip off leading ./ portions
+            // https://github.com/isaacs/node-glob/issues/570
+            while (parsed[0] === '.' && globParts[0] === '.') {
+                parsed.shift();
+                globParts.shift();
+            }
+            /* c8 ignore stop */
+            const p = new pattern_js_1.Pattern(parsed, globParts, 0, this.platform);
+            const m = new minimatch_1.Minimatch(p.globString(), this.mmopts);
+            const children = globParts[globParts.length - 1] === '**';
+            const absolute = p.isAbsolute();
+            if (absolute)
+                this.absolute.push(m);
+            else
+                this.relative.push(m);
+            if (children) {
                 if (absolute)
-                    this.absolute.push(m);
+                    this.absoluteChildren.push(m);
                 else
-                    this.relative.push(m);
-                if (children) {
-                    if (absolute)
-                        this.absoluteChildren.push(m);
-                    else
-                        this.relativeChildren.push(m);
-                }
+                    this.relativeChildren.push(m);
             }
         }
     }
@@ -12524,33 +12501,42 @@ exports.Ignore = Ignore;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.glob = exports.hasMagic = exports.Glob = exports.unescape = exports.escape = exports.sync = exports.iterate = exports.iterateSync = exports.stream = exports.streamSync = exports.globIterate = exports.globIterateSync = exports.globSync = exports.globStream = exports.globStreamSync = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
+exports.glob = exports.sync = exports.iterate = exports.iterateSync = exports.stream = exports.streamSync = exports.Ignore = exports.hasMagic = exports.Glob = exports.unescape = exports.escape = void 0;
+exports.globStreamSync = globStreamSync;
+exports.globStream = globStream;
+exports.globSync = globSync;
+exports.globIterateSync = globIterateSync;
+exports.globIterate = globIterate;
+const minimatch_1 = __nccwpck_require__(4835);
 const glob_js_1 = __nccwpck_require__(1372);
 const has_magic_js_1 = __nccwpck_require__(598);
+var minimatch_2 = __nccwpck_require__(4835);
+Object.defineProperty(exports, "escape", ({ enumerable: true, get: function () { return minimatch_2.escape; } }));
+Object.defineProperty(exports, "unescape", ({ enumerable: true, get: function () { return minimatch_2.unescape; } }));
+var glob_js_2 = __nccwpck_require__(1372);
+Object.defineProperty(exports, "Glob", ({ enumerable: true, get: function () { return glob_js_2.Glob; } }));
+var has_magic_js_2 = __nccwpck_require__(598);
+Object.defineProperty(exports, "hasMagic", ({ enumerable: true, get: function () { return has_magic_js_2.hasMagic; } }));
+var ignore_js_1 = __nccwpck_require__(9550);
+Object.defineProperty(exports, "Ignore", ({ enumerable: true, get: function () { return ignore_js_1.Ignore; } }));
 function globStreamSync(pattern, options = {}) {
     return new glob_js_1.Glob(pattern, options).streamSync();
 }
-exports.globStreamSync = globStreamSync;
 function globStream(pattern, options = {}) {
     return new glob_js_1.Glob(pattern, options).stream();
 }
-exports.globStream = globStream;
 function globSync(pattern, options = {}) {
     return new glob_js_1.Glob(pattern, options).walkSync();
 }
-exports.globSync = globSync;
 async function glob_(pattern, options = {}) {
     return new glob_js_1.Glob(pattern, options).walk();
 }
 function globIterateSync(pattern, options = {}) {
     return new glob_js_1.Glob(pattern, options).iterateSync();
 }
-exports.globIterateSync = globIterateSync;
 function globIterate(pattern, options = {}) {
     return new glob_js_1.Glob(pattern, options).iterate();
 }
-exports.globIterate = globIterate;
 // aliases: glob.sync.stream() glob.stream.sync() glob.sync() etc
 exports.streamSync = globStreamSync;
 exports.stream = Object.assign(globStream, { sync: globStreamSync });
@@ -12562,15 +12548,6 @@ exports.sync = Object.assign(globSync, {
     stream: globStreamSync,
     iterate: globIterateSync,
 });
-/* c8 ignore start */
-var minimatch_2 = __nccwpck_require__(3457);
-Object.defineProperty(exports, "escape", ({ enumerable: true, get: function () { return minimatch_2.escape; } }));
-Object.defineProperty(exports, "unescape", ({ enumerable: true, get: function () { return minimatch_2.unescape; } }));
-var glob_js_2 = __nccwpck_require__(1372);
-Object.defineProperty(exports, "Glob", ({ enumerable: true, get: function () { return glob_js_2.Glob; } }));
-var has_magic_js_2 = __nccwpck_require__(598);
-Object.defineProperty(exports, "hasMagic", ({ enumerable: true, get: function () { return has_magic_js_2.hasMagic; } }));
-/* c8 ignore stop */
 exports.glob = Object.assign(glob_, {
     glob: glob_,
     globSync,
@@ -12601,7 +12578,7 @@ exports.glob.glob = exports.glob;
 // this is just a very light wrapper around 2 arrays with an offset index
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Pattern = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
+const minimatch_1 = __nccwpck_require__(4835);
 const isPatternList = (pl) => pl.length >= 1;
 const isGlobList = (gl) => gl.length >= 1;
 /**
@@ -12709,9 +12686,9 @@ class Pattern {
     globString() {
         return (this.#globString =
             this.#globString ||
-                (this.#index === 0
-                    ? this.isAbsolute()
-                        ? this.#globList[0] + this.#globList.slice(1).join('/')
+                (this.#index === 0 ?
+                    this.isAbsolute() ?
+                        this.#globList[0] + this.#globList.slice(1).join('/')
                         : this.#globList.join('/')
                     : this.#globList.slice(this.#index).join('/')));
     }
@@ -12740,8 +12717,8 @@ class Pattern {
      */
     isUNC() {
         const pl = this.#patternList;
-        return this.#isUNC !== undefined
-            ? this.#isUNC
+        return this.#isUNC !== undefined ?
+            this.#isUNC
             : (this.#isUNC =
                 this.#platform === 'win32' &&
                     this.#index === 0 &&
@@ -12762,8 +12739,8 @@ class Pattern {
      */
     isDrive() {
         const pl = this.#patternList;
-        return this.#isDrive !== undefined
-            ? this.#isDrive
+        return this.#isDrive !== undefined ?
+            this.#isDrive
             : (this.#isDrive =
                 this.#platform === 'win32' &&
                     this.#index === 0 &&
@@ -12779,8 +12756,8 @@ class Pattern {
      */
     isAbsolute() {
         const pl = this.#patternList;
-        return this.#isAbsolute !== undefined
-            ? this.#isAbsolute
+        return this.#isAbsolute !== undefined ?
+            this.#isAbsolute
             : (this.#isAbsolute =
                 (pl[0] === '' && pl.length > 1) ||
                     this.isDrive() ||
@@ -12791,8 +12768,8 @@ class Pattern {
      */
     root() {
         const p = this.#patternList[0];
-        return typeof p === 'string' && this.isAbsolute() && this.#index === 0
-            ? p
+        return (typeof p === 'string' && this.isAbsolute() && this.#index === 0) ?
+            p
             : '';
     }
     /**
@@ -12827,7 +12804,7 @@ exports.Pattern = Pattern;
 // synchronous utility for filtering entries and calculating subwalks
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.Processor = exports.SubWalks = exports.MatchRecord = exports.HasWalkedCache = void 0;
-const minimatch_1 = __nccwpck_require__(3457);
+const minimatch_1 = __nccwpck_require__(4835);
 /**
  * A cache of which patterns have been processed for a given Path
  */
@@ -12928,9 +12905,8 @@ class Processor {
         this.opts = opts;
         this.follow = !!opts.follow;
         this.dot = !!opts.dot;
-        this.hasWalkedCache = hasWalkedCache
-            ? hasWalkedCache.copy()
-            : new HasWalkedCache();
+        this.hasWalkedCache =
+            hasWalkedCache ? hasWalkedCache.copy() : new HasWalkedCache();
     }
     processPatterns(target, patterns) {
         this.patterns = patterns;
@@ -12943,8 +12919,8 @@ class Processor {
             const absolute = pattern.isAbsolute() && this.opts.absolute !== false;
             // start absolute patterns at root
             if (root) {
-                t = t.resolve(root === '/' && this.opts.root !== undefined
-                    ? this.opts.root
+                t = t.resolve(root === '/' && this.opts.root !== undefined ?
+                    this.opts.root
                     : root);
                 const rest = pattern.rest();
                 if (!rest) {
@@ -13141,13 +13117,11 @@ exports.GlobStream = exports.GlobWalker = exports.GlobUtil = void 0;
  *
  * @module
  */
-const minipass_1 = __nccwpck_require__(2253);
+const minipass_1 = __nccwpck_require__(2594);
 const ignore_js_1 = __nccwpck_require__(9550);
 const processor_js_1 = __nccwpck_require__(5722);
-const makeIgnore = (ignore, opts) => typeof ignore === 'string'
-    ? new ignore_js_1.Ignore([ignore], opts)
-    : Array.isArray(ignore)
-        ? new ignore_js_1.Ignore(ignore, opts)
+const makeIgnore = (ignore, opts) => typeof ignore === 'string' ? new ignore_js_1.Ignore([ignore], opts)
+    : Array.isArray(ignore) ? new ignore_js_1.Ignore(ignore, opts)
         : ignore;
 /**
  * basic walking utilities that all the glob walker types use
@@ -13164,13 +13138,20 @@ class GlobUtil {
     #sep;
     signal;
     maxDepth;
+    includeChildMatches;
     constructor(patterns, path, opts) {
         this.patterns = patterns;
         this.path = path;
         this.opts = opts;
         this.#sep = !opts.posix && opts.platform === 'win32' ? '\\' : '/';
-        if (opts.ignore) {
-            this.#ignore = makeIgnore(opts.ignore, opts);
+        this.includeChildMatches = opts.includeChildMatches !== false;
+        if (opts.ignore || !this.includeChildMatches) {
+            this.#ignore = makeIgnore(opts.ignore ?? [], opts);
+            if (!this.includeChildMatches &&
+                typeof this.#ignore.add !== 'function') {
+                const m = 'cannot ignore child matches, ignore lacks add() method.';
+                throw new Error(m);
+            }
         }
         // ignore, always set with maxDepth, but it's optional on the
         // GlobOptions type
@@ -13230,15 +13211,28 @@ class GlobUtil {
             e = rpc;
         }
         const needStat = e.isUnknown() || this.opts.stat;
-        return this.matchCheckTest(needStat ? await e.lstat() : e, ifDir);
+        const s = needStat ? await e.lstat() : e;
+        if (this.opts.follow && this.opts.nodir && s?.isSymbolicLink()) {
+            const target = await s.realpath();
+            /* c8 ignore start */
+            if (target && (target.isUnknown() || this.opts.stat)) {
+                await target.lstat();
+            }
+            /* c8 ignore stop */
+        }
+        return this.matchCheckTest(s, ifDir);
     }
     matchCheckTest(e, ifDir) {
-        return e &&
+        return (e &&
             (this.maxDepth === Infinity || e.depth() <= this.maxDepth) &&
             (!ifDir || e.canReaddir()) &&
             (!this.opts.nodir || !e.isDirectory()) &&
-            !this.#ignored(e)
-            ? e
+            (!this.opts.nodir ||
+                !this.opts.follow ||
+                !e.isSymbolicLink() ||
+                !e.realpathCached()?.isDirectory()) &&
+            !this.#ignored(e)) ?
+            e
             : undefined;
     }
     matchCheckSync(e, ifDir) {
@@ -13252,11 +13246,23 @@ class GlobUtil {
             e = rpc;
         }
         const needStat = e.isUnknown() || this.opts.stat;
-        return this.matchCheckTest(needStat ? e.lstatSync() : e, ifDir);
+        const s = needStat ? e.lstatSync() : e;
+        if (this.opts.follow && this.opts.nodir && s?.isSymbolicLink()) {
+            const target = s.realpathSync();
+            if (target && (target?.isUnknown() || this.opts.stat)) {
+                target.lstatSync();
+            }
+        }
+        return this.matchCheckTest(s, ifDir);
     }
     matchFinish(e, absolute) {
         if (this.#ignored(e))
             return;
+        // we know we have an ignore if this is false, but TS doesn't
+        if (!this.includeChildMatches && this.#ignore?.add) {
+            const ign = `${e.relativePosix()}/**`;
+            this.#ignore.add(ign);
+        }
         const abs = this.opts.absolute === undefined ? absolute : this.opts.absolute;
         this.seen.add(e);
         const mark = this.opts.mark && e.isDirectory() ? this.#sep : '';
@@ -13270,8 +13276,8 @@ class GlobUtil {
         }
         else {
             const rel = this.opts.posix ? e.relativePosix() : e.relative();
-            const pre = this.opts.dotRelative && !rel.startsWith('..' + this.#sep)
-                ? '.' + this.#sep
+            const pre = this.opts.dotRelative && !rel.startsWith('..' + this.#sep) ?
+                '.' + this.#sep
                 : '';
             this.matchEmit(!rel ? '.' + mark : pre + rel + mark);
         }
@@ -13411,10 +13417,9 @@ class GlobUtil {
 }
 exports.GlobUtil = GlobUtil;
 class GlobWalker extends GlobUtil {
-    matches;
+    matches = new Set();
     constructor(patterns, path, opts) {
         super(patterns, path, opts);
-        this.matches = new Set();
     }
     matchEmit(e) {
         this.matches.add(e);
@@ -13493,7 +13498,7 @@ exports.GlobStream = GlobStream;
 
 /***/ }),
 
-/***/ 9425:
+/***/ 2806:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -13514,7 +13519,7 @@ exports.assertValidPattern = assertValidPattern;
 
 /***/ }),
 
-/***/ 6794:
+/***/ 6795:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -13522,15 +13527,15 @@ exports.assertValidPattern = assertValidPattern;
 // parse a single path portion
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AST = void 0;
-const brace_expressions_js_1 = __nccwpck_require__(9875);
-const unescape_js_1 = __nccwpck_require__(407);
+const brace_expressions_js_1 = __nccwpck_require__(2314);
+const unescape_js_1 = __nccwpck_require__(7055);
 const types = new Set(['!', '?', '+', '*', '@']);
 const isExtglobType = (c) => types.has(c);
 // Patterns that get prepended to bind to the start of either the
 // entire string, or just a single path portion, to prevent dots
 // and/or traversal patterns, when needed.
 // Exts don't need the ^ or / bit, because the root binds that already.
-const startNoTraversal = '(?!\\.\\.?(?:$|/))';
+const startNoTraversal = '(?!(?:^|/)\\.\\.?(?:$|/))';
 const startNoDot = '(?!\\.)';
 // characters that indicate a start of pattern needs the "no dots" bit,
 // because a dot *might* be matched. ( is not in the list, because in
@@ -13858,6 +13863,9 @@ class AST {
             _glob: glob,
         });
     }
+    get options() {
+        return this.#options;
+    }
     // returns the string match, the regexp source, whether there's magic
     // in the regexp (so a regular expression is required) and whether or
     // not the uflag is needed for the regular expression (for posix classes)
@@ -13927,7 +13935,8 @@ class AST {
     // - Since the start for a join is eg /(?!\.) and the start for a part
     // is ^(?!\.), we can just prepend (?!\.) to the pattern (either root
     // or start or whatever) and prepend ^ or / at the Regexp construction.
-    toRegExpSource() {
+    toRegExpSource(allowDot) {
+        const dot = allowDot ?? !!this.#options.dot;
         if (this.#root === this)
             this.#fillNegs();
         if (!this.type) {
@@ -13936,7 +13945,7 @@ class AST {
                 .map(p => {
                 const [re, _, hasMagic, uflag] = typeof p === 'string'
                     ? AST.#parseGlob(p, this.#hasMagic, noEmpty)
-                    : p.toRegExpSource();
+                    : p.toRegExpSource(allowDot);
                 this.#hasMagic = this.#hasMagic || hasMagic;
                 this.#uflag = this.#uflag || uflag;
                 return re;
@@ -13956,14 +13965,14 @@ class AST {
                         // and prevent that.
                         const needNoTrav = 
                         // dots are allowed, and the pattern starts with [ or .
-                        (this.#options.dot && aps.has(src.charAt(0))) ||
+                        (dot && aps.has(src.charAt(0))) ||
                             // the pattern starts with \., and then [ or .
                             (src.startsWith('\\.') && aps.has(src.charAt(2))) ||
                             // the pattern starts with \.\., and then [ or .
                             (src.startsWith('\\.\\.') && aps.has(src.charAt(4)));
                         // no need to prevent dots if it can't match a dot, or if a
                         // sub-pattern will be preventing it anyway.
-                        const needNoDot = !this.#options.dot && aps.has(src.charAt(0));
+                        const needNoDot = !dot && !allowDot && aps.has(src.charAt(0));
                         start = needNoTrav ? startNoTraversal : needNoDot ? startNoDot : '';
                     }
                 }
@@ -13983,23 +13992,13 @@ class AST {
                 this.#uflag,
             ];
         }
+        // We need to calculate the body *twice* if it's a repeat pattern
+        // at the start, once in nodot mode, then again in dot mode, so a
+        // pattern like *(?) can match 'x.y'
+        const repeated = this.type === '*' || this.type === '+';
         // some kind of extglob
         const start = this.type === '!' ? '(?:(?!(?:' : '(?:';
-        const body = this.#parts
-            .map(p => {
-            // extglob ASTs should only contain parent ASTs
-            /* c8 ignore start */
-            if (typeof p === 'string') {
-                throw new Error('string type in extglob ast??');
-            }
-            /* c8 ignore stop */
-            // can ignore hasMagic, because extglobs are already always magic
-            const [re, _, _hasMagic, uflag] = p.toRegExpSource();
-            this.#uflag = this.#uflag || uflag;
-            return re;
-        })
-            .filter(p => !(this.isStart() && this.isEnd()) || !!p)
-            .join('|');
+        let body = this.#partsToRegExp(dot);
         if (this.isStart() && this.isEnd() && !body && this.type !== '!') {
             // invalid extglob, has to at least be *something* present, if it's
             // the entire path portion.
@@ -14009,22 +14008,37 @@ class AST {
             this.#hasMagic = undefined;
             return [s, (0, unescape_js_1.unescape)(this.toString()), false, false];
         }
+        // XXX abstract out this map method
+        let bodyDotAllowed = !repeated || allowDot || dot || !startNoDot
+            ? ''
+            : this.#partsToRegExp(true);
+        if (bodyDotAllowed === body) {
+            bodyDotAllowed = '';
+        }
+        if (bodyDotAllowed) {
+            body = `(?:${body})(?:${bodyDotAllowed})*?`;
+        }
         // an empty !() is exactly equivalent to a starNoEmpty
         let final = '';
         if (this.type === '!' && this.#emptyExt) {
-            final =
-                (this.isStart() && !this.#options.dot ? startNoDot : '') + starNoEmpty;
+            final = (this.isStart() && !dot ? startNoDot : '') + starNoEmpty;
         }
         else {
             const close = this.type === '!'
                 ? // !() must match something,but !(x) can match ''
                     '))' +
-                        (this.isStart() && !this.#options.dot ? startNoDot : '') +
+                        (this.isStart() && !dot && !allowDot ? startNoDot : '') +
                         star +
                         ')'
                 : this.type === '@'
                     ? ')'
-                    : `)${this.type}`;
+                    : this.type === '?'
+                        ? ')?'
+                        : this.type === '+' && bodyDotAllowed
+                            ? ')'
+                            : this.type === '*' && bodyDotAllowed
+                                ? `)?`
+                                : `)${this.type}`;
             final = start + body + close;
         }
         return [
@@ -14033,6 +14047,23 @@ class AST {
             (this.#hasMagic = !!this.#hasMagic),
             this.#uflag,
         ];
+    }
+    #partsToRegExp(dot) {
+        return this.#parts
+            .map(p => {
+            // extglob ASTs should only contain parent ASTs
+            /* c8 ignore start */
+            if (typeof p === 'string') {
+                throw new Error('string type in extglob ast??');
+            }
+            /* c8 ignore stop */
+            // can ignore hasMagic, because extglobs are already always magic
+            const [re, _, _hasMagic, uflag] = p.toRegExpSource(dot);
+            this.#uflag = this.#uflag || uflag;
+            return re;
+        })
+            .filter(p => !(this.isStart() && this.isEnd()) || !!p)
+            .join('|');
     }
     static #parseGlob(glob, hasMagic, noEmpty = false) {
         let escaping = false;
@@ -14087,7 +14118,7 @@ exports.AST = AST;
 
 /***/ }),
 
-/***/ 9875:
+/***/ 2314:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -14246,7 +14277,7 @@ exports.parseClass = parseClass;
 
 /***/ }),
 
-/***/ 1941:
+/***/ 6392:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -14275,7 +14306,7 @@ exports.escape = escape;
 
 /***/ }),
 
-/***/ 3457:
+/***/ 4835:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -14285,11 +14316,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.unescape = exports.escape = exports.AST = exports.Minimatch = exports.match = exports.makeRe = exports.braceExpand = exports.defaults = exports.filter = exports.GLOBSTAR = exports.sep = exports.minimatch = void 0;
-const brace_expansion_1 = __importDefault(__nccwpck_require__(3717));
-const assert_valid_pattern_js_1 = __nccwpck_require__(9425);
-const ast_js_1 = __nccwpck_require__(6794);
-const escape_js_1 = __nccwpck_require__(1941);
-const unescape_js_1 = __nccwpck_require__(407);
+const brace_expansion_1 = __importDefault(__nccwpck_require__(291));
+const assert_valid_pattern_js_1 = __nccwpck_require__(2806);
+const ast_js_1 = __nccwpck_require__(6795);
+const escape_js_1 = __nccwpck_require__(6392);
+const unescape_js_1 = __nccwpck_require__(7055);
 const minimatch = (p, pattern, options = {}) => {
     (0, assert_valid_pattern_js_1.assertValidPattern)(pattern);
     // shortcut: comments match nothing.
@@ -14625,6 +14656,7 @@ class Minimatch {
             globParts = this.levelOneOptimize(globParts);
         }
         else {
+            // just collapse multiple ** portions into one
             globParts = this.adjascentGlobstarOptimize(globParts);
         }
         return globParts;
@@ -14811,10 +14843,11 @@ class Minimatch {
         for (let i = 0; i < globParts.length - 1; i++) {
             for (let j = i + 1; j < globParts.length; j++) {
                 const matched = this.partsMatch(globParts[i], globParts[j], !this.preserveMultipleSlashes);
-                if (!matched)
-                    continue;
-                globParts[i] = matched;
-                globParts[j] = [];
+                if (matched) {
+                    globParts[i] = [];
+                    globParts[j] = matched;
+                    break;
+                }
             }
         }
         return globParts.filter(gs => gs.length);
@@ -15114,7 +15147,11 @@ class Minimatch {
             fastTest = dotStarTest;
         }
         const re = ast_js_1.AST.fromGlob(pattern, this.options).toMMPattern();
-        return fastTest ? Object.assign(re, { test: fastTest }) : re;
+        if (fastTest && typeof re === 'object') {
+            // Avoids overriding in frozen environments
+            Reflect.defineProperty(re, 'test', { value: fastTest });
+        }
+        return re;
     }
     makeRe() {
         if (this.regexp || this.regexp === false)
@@ -15278,11 +15315,11 @@ class Minimatch {
 }
 exports.Minimatch = Minimatch;
 /* c8 ignore start */
-var ast_js_2 = __nccwpck_require__(6794);
+var ast_js_2 = __nccwpck_require__(6795);
 Object.defineProperty(exports, "AST", ({ enumerable: true, get: function () { return ast_js_2.AST; } }));
-var escape_js_2 = __nccwpck_require__(1941);
+var escape_js_2 = __nccwpck_require__(6392);
 Object.defineProperty(exports, "escape", ({ enumerable: true, get: function () { return escape_js_2.escape; } }));
-var unescape_js_2 = __nccwpck_require__(407);
+var unescape_js_2 = __nccwpck_require__(7055);
 Object.defineProperty(exports, "unescape", ({ enumerable: true, get: function () { return unescape_js_2.unescape; } }));
 /* c8 ignore stop */
 exports.minimatch.AST = ast_js_1.AST;
@@ -15293,7 +15330,7 @@ exports.minimatch.unescape = unescape_js_1.unescape;
 
 /***/ }),
 
-/***/ 407:
+/***/ 7055:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -15324,7 +15361,7 @@ exports.unescape = unescape;
 
 /***/ }),
 
-/***/ 2253:
+/***/ 2594:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -15340,9 +15377,9 @@ const proc = typeof process === 'object' && process
         stdout: null,
         stderr: null,
     };
-const events_1 = __nccwpck_require__(2361);
-const stream_1 = __importDefault(__nccwpck_require__(2781));
-const string_decoder_1 = __nccwpck_require__(1576);
+const node_events_1 = __nccwpck_require__(5673);
+const node_stream_1 = __importDefault(__nccwpck_require__(4492));
+const node_string_decoder_1 = __nccwpck_require__(6915);
 /**
  * Return true if the argument is a Minipass stream, Node stream, or something
  * else that Minipass can interact with.
@@ -15350,7 +15387,7 @@ const string_decoder_1 = __nccwpck_require__(1576);
 const isStream = (s) => !!s &&
     typeof s === 'object' &&
     (s instanceof Minipass ||
-        s instanceof stream_1.default ||
+        s instanceof node_stream_1.default ||
         (0, exports.isReadable)(s) ||
         (0, exports.isWritable)(s));
 exports.isStream = isStream;
@@ -15359,17 +15396,17 @@ exports.isStream = isStream;
  */
 const isReadable = (s) => !!s &&
     typeof s === 'object' &&
-    s instanceof events_1.EventEmitter &&
+    s instanceof node_events_1.EventEmitter &&
     typeof s.pipe === 'function' &&
     // node core Writable streams have a pipe() method, but it throws
-    s.pipe !== stream_1.default.Writable.prototype.pipe;
+    s.pipe !== node_stream_1.default.Writable.prototype.pipe;
 exports.isReadable = isReadable;
 /**
  * Return true if the argument is a valid {@link Minipass.Writable}
  */
 const isWritable = (s) => !!s &&
     typeof s === 'object' &&
-    s instanceof events_1.EventEmitter &&
+    s instanceof node_events_1.EventEmitter &&
     typeof s.write === 'function' &&
     typeof s.end === 'function';
 exports.isWritable = isWritable;
@@ -15476,7 +15513,7 @@ const isEncodingOptions = (o) => !o.objectMode && !!o.encoding && o.encoding !==
  * `Events` is the set of event handler signatures that this object
  * will emit, see {@link Minipass.Events}
  */
-class Minipass extends events_1.EventEmitter {
+class Minipass extends node_events_1.EventEmitter {
     [FLOWING] = false;
     [PAUSED] = false;
     [PIPES] = [];
@@ -15531,7 +15568,7 @@ class Minipass extends events_1.EventEmitter {
         }
         this[ASYNC] = !!options.async;
         this[DECODER] = this[ENCODING]
-            ? new string_decoder_1.StringDecoder(this[ENCODING])
+            ? new node_string_decoder_1.StringDecoder(this[ENCODING])
             : null;
         //@ts-ignore - private option for debugging and testing
         if (options && options.debugExposeBuffer === true) {
@@ -16357,6 +16394,335 @@ class Minipass extends events_1.EventEmitter {
 exports.Minipass = Minipass;
 //# sourceMappingURL=index.js.map
 
+/***/ }),
+
+/***/ 291:
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __nccwpck_require__) => {
+
+"use strict";
+// ESM COMPAT FLAG
+__nccwpck_require__.r(__webpack_exports__);
+
+// EXPORTS
+__nccwpck_require__.d(__webpack_exports__, {
+  "default": () => (/* binding */ expandTop)
+});
+
+;// CONCATENATED MODULE: ./node_modules/rimraf/node_modules/balanced-match/index.js
+/**
+ * @param {string | RegExp} a
+ * @param {string | RegExp} b
+ * @param {string} str
+ */
+function balanced (a, b, str) {
+  if (a instanceof RegExp) a = maybeMatch(a, str)
+  if (b instanceof RegExp) b = maybeMatch(b, str)
+
+  const r = range(a, b, str)
+
+  return (
+    r && {
+      start: r[0],
+      end: r[1],
+      pre: str.slice(0, r[0]),
+      body: str.slice(r[0] + a.length, r[1]),
+      post: str.slice(r[1] + b.length)
+    }
+  )
+}
+
+/**
+ * @param {RegExp} reg
+ * @param {string} str
+ */
+function maybeMatch (reg, str) {
+  const m = str.match(reg)
+  return m ? m[0] : null
+}
+
+/**
+ * @param {string} a
+ * @param {string} b
+ * @param {string} str
+ */
+function range (a, b, str) {
+  let begs, beg, left, right, result
+  let ai = str.indexOf(a)
+  let bi = str.indexOf(b, ai + 1)
+  let i = ai
+
+  if (ai >= 0 && bi > 0) {
+    if (a === b) {
+      return [ai, bi]
+    }
+    begs = []
+    left = str.length
+
+    while (i >= 0 && !result) {
+      if (i === ai) {
+        begs.push(i)
+        ai = str.indexOf(a, i + 1)
+      } else if (begs.length === 1) {
+        result = [begs.pop(), bi]
+      } else {
+        beg = begs.pop()
+        if (beg < left) {
+          left = beg
+          right = bi
+        }
+
+        bi = str.indexOf(b, i + 1)
+      }
+
+      i = ai < bi && ai >= 0 ? ai : bi
+    }
+
+    if (begs.length) {
+      result = [left, right]
+    }
+  }
+
+  return result
+}
+
+;// CONCATENATED MODULE: ./node_modules/rimraf/node_modules/brace-expansion/index.js
+
+
+const escSlash = '\0SLASH' + Math.random() + '\0'
+const escOpen = '\0OPEN' + Math.random() + '\0'
+const escClose = '\0CLOSE' + Math.random() + '\0'
+const escComma = '\0COMMA' + Math.random() + '\0'
+const escPeriod = '\0PERIOD' + Math.random() + '\0'
+const escSlashPattern = new RegExp(escSlash, 'g')
+const escOpenPattern = new RegExp(escOpen, 'g')
+const escClosePattern = new RegExp(escClose, 'g')
+const escCommaPattern = new RegExp(escComma, 'g')
+const escPeriodPattern = new RegExp(escPeriod, 'g')
+const slashPattern = /\\\\/g
+const openPattern = /\\{/g
+const closePattern = /\\}/g
+const commaPattern = /\\,/g
+const periodPattern = /\\./g
+
+/**
+ * @return {number}
+ */
+function numeric (str) {
+  return !isNaN(str)
+    ? parseInt(str, 10)
+    : str.charCodeAt(0)
+}
+
+/**
+ * @param {string} str
+ */
+function escapeBraces (str) {
+  return str.replace(slashPattern, escSlash)
+    .replace(openPattern, escOpen)
+    .replace(closePattern, escClose)
+    .replace(commaPattern, escComma)
+    .replace(periodPattern, escPeriod)
+}
+
+/**
+ * @param {string} str
+ */
+function unescapeBraces (str) {
+  return str.replace(escSlashPattern, '\\')
+    .replace(escOpenPattern, '{')
+    .replace(escClosePattern, '}')
+    .replace(escCommaPattern, ',')
+    .replace(escPeriodPattern, '.')
+}
+
+/**
+ * Basically just str.split(","), but handling cases
+ * where we have nested braced sections, which should be
+ * treated as individual members, like {a,{b,c},d}
+ * @param {string} str
+ */
+function parseCommaParts (str) {
+  if (!str) { return [''] }
+
+  const parts = []
+  const m = balanced('{', '}', str)
+
+  if (!m) { return str.split(',') }
+
+  const { pre, body, post } = m
+  const p = pre.split(',')
+
+  p[p.length - 1] += '{' + body + '}'
+  const postParts = parseCommaParts(post)
+  if (post.length) {
+    p[p.length - 1] += postParts.shift()
+    p.push.apply(p, postParts)
+  }
+
+  parts.push.apply(parts, p)
+
+  return parts
+}
+
+/**
+ * @param {string} str
+ */
+function expandTop (str) {
+  if (!str) { return [] }
+
+  // I don't know why Bash 4.3 does this, but it does.
+  // Anything starting with {} will have the first two bytes preserved
+  // but *only* at the top level, so {},a}b will not expand to anything,
+  // but a{},b}c will be expanded to [a}c,abc].
+  // One could argue that this is a bug in Bash, but since the goal of
+  // this module is to match Bash's rules, we escape a leading {}
+  if (str.slice(0, 2) === '{}') {
+    str = '\\{\\}' + str.slice(2)
+  }
+
+  return expand(escapeBraces(str), true).map(unescapeBraces)
+}
+
+/**
+ * @param {string} str
+ */
+function embrace (str) {
+  return '{' + str + '}'
+}
+
+/**
+ * @param {string} el
+ */
+function isPadded (el) {
+  return /^-?0\d/.test(el)
+}
+
+/**
+ * @param {number} i
+ * @param {number} y
+ */
+function lte (i, y) {
+  return i <= y
+}
+
+/**
+ * @param {number} i
+ * @param {number} y
+ */
+function gte (i, y) {
+  return i >= y
+}
+
+/**
+ * @param {string} str
+ * @param {boolean} [isTop]
+ */
+function expand (str, isTop) {
+  /** @type {string[]} */
+  const expansions = []
+
+  const m = balanced('{', '}', str)
+  if (!m) return [str]
+
+  // no need to expand pre, since it is guaranteed to be free of brace-sets
+  const pre = m.pre
+  const post = m.post.length
+    ? expand(m.post, false)
+    : ['']
+
+  if (/\$$/.test(m.pre)) {
+    for (let k = 0; k < post.length; k++) {
+      const expansion = pre + '{' + m.body + '}' + post[k]
+      expansions.push(expansion)
+    }
+  } else {
+    const isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body)
+    const isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body)
+    const isSequence = isNumericSequence || isAlphaSequence
+    const isOptions = m.body.indexOf(',') >= 0
+    if (!isSequence && !isOptions) {
+      // {a},b}
+      if (m.post.match(/,.*\}/)) {
+        str = m.pre + '{' + m.body + escClose + m.post
+        return expand(str)
+      }
+      return [str]
+    }
+
+    let n
+    if (isSequence) {
+      n = m.body.split(/\.\./)
+    } else {
+      n = parseCommaParts(m.body)
+      if (n.length === 1) {
+        // x{{a,b}}y ==> x{a}y x{b}y
+        n = expand(n[0], false).map(embrace)
+        if (n.length === 1) {
+          return post.map(function (p) {
+            return m.pre + n[0] + p
+          })
+        }
+      }
+    }
+
+    // at this point, n is the parts, and we know it's not a comma set
+    // with a single entry.
+    let N
+
+    if (isSequence) {
+      const x = numeric(n[0])
+      const y = numeric(n[1])
+      const width = Math.max(n[0].length, n[1].length)
+      let incr = n.length === 3
+        ? Math.abs(numeric(n[2]))
+        : 1
+      let test = lte
+      const reverse = y < x
+      if (reverse) {
+        incr *= -1
+        test = gte
+      }
+      const pad = n.some(isPadded)
+
+      N = []
+
+      for (let i = x; test(i, y); i += incr) {
+        let c
+        if (isAlphaSequence) {
+          c = String.fromCharCode(i)
+          if (c === '\\') { c = '' }
+        } else {
+          c = String(i)
+          if (pad) {
+            const need = width - c.length
+            if (need > 0) {
+              const z = new Array(need + 1).join('0')
+              if (i < 0) { c = '-' + z + c.slice(1) } else { c = z + c }
+            }
+          }
+        }
+        N.push(c)
+      }
+    } else {
+      N = []
+
+      for (let j = 0; j < n.length; j++) {
+        N.push.apply(N, expand(n[j], false))
+      }
+    }
+
+    for (let j = 0; j < N.length; j++) {
+      for (let k = 0; k < post.length; k++) {
+        const expansion = pre + N[j] + post[k]
+        if (!isTop || isSequence || expansion) { expansions.push(expansion) }
+      }
+    }
+  }
+
+  return expansions
+}
+
+
 /***/ })
 
 /******/ 	});
@@ -16392,6 +16758,34 @@ exports.Minipass = Minipass;
 /******/ 	}
 /******/ 	
 /************************************************************************/
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter functions for harmony exports
+/******/ 		__nccwpck_require__.d = (exports, definition) => {
+/******/ 			for(var key in definition) {
+/******/ 				if(__nccwpck_require__.o(definition, key) && !__nccwpck_require__.o(exports, key)) {
+/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/make namespace object */
+/******/ 	(() => {
+/******/ 		// define __esModule on exports
+/******/ 		__nccwpck_require__.r = (exports) => {
+/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 			}
+/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 		};
+/******/ 	})();
+/******/ 	
 /******/ 	/* webpack/runtime/compat */
 /******/ 	
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
