@@ -7486,7 +7486,7 @@ exports["default"] = _default;
 /***/ 2613:
 /***/ ((module) => {
 
-module.exports = require("assert");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("assert");
 
 /***/ }),
 
@@ -7500,63 +7500,63 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("child_proces
 /***/ 6982:
 /***/ ((module) => {
 
-module.exports = require("crypto");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("crypto");
 
 /***/ }),
 
 /***/ 4434:
 /***/ ((module) => {
 
-module.exports = require("events");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("events");
 
 /***/ }),
 
 /***/ 9896:
 /***/ ((module) => {
 
-module.exports = require("fs");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("fs");
 
 /***/ }),
 
 /***/ 8611:
 /***/ ((module) => {
 
-module.exports = require("http");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("http");
 
 /***/ }),
 
 /***/ 5692:
 /***/ ((module) => {
 
-module.exports = require("https");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("https");
 
 /***/ }),
 
 /***/ 9278:
 /***/ ((module) => {
 
-module.exports = require("net");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("net");
 
 /***/ }),
 
 /***/ 857:
 /***/ ((module) => {
 
-module.exports = require("os");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("os");
 
 /***/ }),
 
 /***/ 6928:
 /***/ ((module) => {
 
-module.exports = require("path");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("path");
 
 /***/ }),
 
 /***/ 2203:
 /***/ ((module) => {
 
-module.exports = require("stream");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("stream");
 
 /***/ }),
 
@@ -7577,14 +7577,14 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("timers");
 /***/ 4756:
 /***/ ((module) => {
 
-module.exports = require("tls");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("tls");
 
 /***/ }),
 
 /***/ 9023:
 /***/ ((module) => {
 
-module.exports = require("util");
+module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("util");
 
 /***/ })
 
@@ -9796,7 +9796,7 @@ minimatch.escape = escape_escape;
 minimatch.unescape = unescape_unescape;
 //# sourceMappingURL=index.js.map
 ;// CONCATENATED MODULE: external "node:url"
-const external_node_url_namespaceObject = require("node:url");
+const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:url");
 ;// CONCATENATED MODULE: ./node_modules/path-scurry/node_modules/lru-cache/dist/esm/index.js
 /**
  * @module LRUCache
@@ -11341,20 +11341,20 @@ class LRUCache {
 }
 //# sourceMappingURL=index.js.map
 ;// CONCATENATED MODULE: external "node:path"
-const external_node_path_namespaceObject = require("node:path");
+const external_node_path_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
 // EXTERNAL MODULE: external "fs"
 var external_fs_ = __nccwpck_require__(9896);
 ;// CONCATENATED MODULE: external "node:fs"
-const external_node_fs_namespaceObject = require("node:fs");
+const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs");
 var external_node_fs_namespaceObject_0 = /*#__PURE__*/__nccwpck_require__.t(external_node_fs_namespaceObject, 2);
 ;// CONCATENATED MODULE: external "node:fs/promises"
-const promises_namespaceObject = require("node:fs/promises");
+const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs/promises");
 ;// CONCATENATED MODULE: external "node:events"
-const external_node_events_namespaceObject = require("node:events");
+const external_node_events_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:events");
 ;// CONCATENATED MODULE: external "node:stream"
-const external_node_stream_namespaceObject = require("node:stream");
+const external_node_stream_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:stream");
 ;// CONCATENATED MODULE: external "node:string_decoder"
-const external_node_string_decoder_namespaceObject = require("node:string_decoder");
+const external_node_string_decoder_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:string_decoder");
 ;// CONCATENATED MODULE: ./node_modules/path-scurry/node_modules/minipass/dist/esm/index.js
 const proc = typeof process === 'object' && process
     ? process
