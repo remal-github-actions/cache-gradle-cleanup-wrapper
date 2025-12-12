@@ -16,7 +16,7 @@
     "build": "npm run dist && npm run test"
   },
   "dependencies": {
-    "@actions/core": "1.11.1",
+    "@actions/core": "2.0.0",
     "@actions/glob": "0.5.0",
     "rimraf": "6.1.2"
   },
