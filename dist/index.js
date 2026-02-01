@@ -32480,6 +32480,7 @@ class Path {
 
 
 
+const { Minimatch } = minimatch;
 const internal_pattern_IS_WINDOWS = process.platform === 'win32';
 class Pattern {
     constructor(patternOrNegate, isImplicitPattern = false, segments, homedir) {
@@ -32536,7 +32537,7 @@ class Pattern {
             nonegate: true
         };
         pattern = internal_pattern_IS_WINDOWS ? pattern.replace(/\\/g, '/') : pattern;
-        this.minimatch = new minimatch.Minimatch(pattern, minimatchOptions);
+        this.minimatch = new Minimatch(pattern, minimatchOptions);
     }
     /**
      * Matches the pattern against the specified path
@@ -34123,7 +34124,7 @@ const esm_minimatch = (p, pattern, options = {}) => {
     if (!options.nocomment && pattern.charAt(0) === '#') {
         return false;
     }
-    return new Minimatch(pattern, options).match(p);
+    return new esm_Minimatch(pattern, options).match(p);
 };
 // Optimized checking for the most common glob patterns.
 const starDotExtRE = /^\*+([^+@!?\*\[\(]*)$/;
@@ -34276,10 +34277,10 @@ esm_minimatch.braceExpand = braceExpand;
 // when it is the *only* thing in a path portion.  Otherwise, any series
 // of * is equivalent to a single *.  Globstar behavior is enabled by
 // default, and can be disabled by setting options.noglobstar.
-const makeRe = (pattern, options = {}) => new Minimatch(pattern, options).makeRe();
+const makeRe = (pattern, options = {}) => new esm_Minimatch(pattern, options).makeRe();
 esm_minimatch.makeRe = makeRe;
 const match = (list, pattern, options = {}) => {
-    const mm = new Minimatch(pattern, options);
+    const mm = new esm_Minimatch(pattern, options);
     list = list.filter(f => mm.match(f));
     if (mm.options.nonull && !list.length) {
         list.push(pattern);
@@ -34290,7 +34291,7 @@ esm_minimatch.match = match;
 // replace stuff like \* with *
 const globMagic = /[?*]|[+@!]\(.*?\)|\[|\]/;
 const esm_regExpEscape = (s) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-class Minimatch {
+class esm_Minimatch {
     options;
     set;
     pattern;
@@ -35124,7 +35125,7 @@ class Minimatch {
 
 /* c8 ignore stop */
 esm_minimatch.AST = AST;
-esm_minimatch.Minimatch = Minimatch;
+esm_minimatch.Minimatch = esm_Minimatch;
 esm_minimatch.escape = escape_escape;
 esm_minimatch.unescape = unescape_unescape;
 //# sourceMappingURL=index.js.map
@@ -39958,7 +39959,7 @@ class Ignore {
         // for absolute-ness.
         // Yet another way, Minimatch could take an array of glob strings, and
         // a cwd option, and do the right thing.
-        const mm = new Minimatch(ign, this.mmopts);
+        const mm = new esm_Minimatch(ign, this.mmopts);
         for (let i = 0; i < mm.set.length; i++) {
             const parsed = mm.set[i];
             const globParts = mm.globParts[i];
@@ -39974,7 +39975,7 @@ class Ignore {
             }
             /* c8 ignore stop */
             const p = new pattern_Pattern(parsed, globParts, 0, this.platform);
-            const m = new Minimatch(p.globString(), this.mmopts);
+            const m = new esm_Minimatch(p.globString(), this.mmopts);
             const children = globParts[globParts.length - 1] === '**';
             const absolute = p.isAbsolute();
             if (absolute)
@@ -40851,7 +40852,7 @@ class Glob {
             windowsPathsNoEscape: this.windowsPathsNoEscape,
             debug: !!this.opts.debug,
         };
-        const mms = this.pattern.map(p => new Minimatch(p, mmo));
+        const mms = this.pattern.map(p => new esm_Minimatch(p, mmo));
         const [matchSet, globParts] = mms.reduce((set, m) => {
             set[0].push(...m.set);
             set[1].push(...m.globParts);
@@ -40958,7 +40959,7 @@ const hasMagic = (pattern, options = {}) => {
         pattern = [pattern];
     }
     for (const p of pattern) {
-        if (new Minimatch(p, options).hasMagic())
+        if (new esm_Minimatch(p, options).hasMagic())
             return true;
     }
     return false;
